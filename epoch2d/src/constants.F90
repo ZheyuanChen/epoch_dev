@@ -222,6 +222,10 @@ MODULE constants
   REAL(num), PARAMETER :: mc0 = 2.73092429345209278e-22_num
   ! m0 * c**2
   REAL(num), PARAMETER :: m0c2 = mc0 * c
+  ! Muon mass [kg]
+  REAL(num), PARAMETER :: m_mu = 1.883531627e-28_num
+  ! Atomic mass unit [kg]
+  REAL(num), PARAMETER :: amu = 1.660538921e-27_num
 
   ! Constants used in pair production
 #ifdef PHOTONS
@@ -257,6 +261,8 @@ MODULE constants
   INTEGER, PARAMETER :: c_species_id_electron = 2
   INTEGER, PARAMETER :: c_species_id_positron = 3
   INTEGER, PARAMETER :: c_species_id_proton = 4
+  INTEGER, PARAMETER :: c_species_id_muon = 5
+  INTEGER, PARAMETER :: c_species_id_antimuon = 6
 
   ! direction parameters
   INTEGER, PARAMETER :: c_dir_x = 1
@@ -307,6 +313,8 @@ MODULE constants
   INTEGER(i8), PARAMETER :: c_def_bremsstrahlung = 2**26
   INTEGER(i8), PARAMETER :: c_def_probe_time = 2**27
   INTEGER(i8), PARAMETER :: c_def_transition_rates = 2**28
+  INTEGER(i8), PARAMETER :: c_def_brem_trident = 2**29
+  INTEGER(i8), PARAMETER :: c_def_brem_muon = 2**30
 
   ! Stagger types
   INTEGER, PARAMETER :: c_stagger_ex = c_stagger_face_x
@@ -653,7 +661,9 @@ MODULE constants
   INTEGER, PARAMETER :: c_dump_part_rate_dr      = 76
   INTEGER, PARAMETER :: c_dump_part_rate_rr      = 77
   INTEGER, PARAMETER :: c_dump_part_rate_3br     = 78
-  INTEGER, PARAMETER :: num_vars_to_dump         = 78
+  INTEGER, PARAMETER :: c_dump_part_dep_brem_tri = 79
+  INTEGER, PARAMETER :: c_dump_part_opdep_bh_mu  = 80
+  INTEGER, PARAMETER :: num_vars_to_dump         = 80
 
   INTEGER, PARAMETER :: c_subset_random     = 1
   INTEGER, PARAMETER :: c_subset_gamma_min  = 2
