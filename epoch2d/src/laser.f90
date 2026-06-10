@@ -749,7 +749,8 @@ CONTAINS
             laser_inject_sum = laser_inject_sum + current%profile(icell)**2
           END DO
           t_env = laser_time_profile(current)
-          lfactor = 0.5_num * epsilon0 * c * factor * (t_env * current%amp)**2
+          lfactor = 0.5_num * epsilon0 * c * ABS(factor) &
+              * (t_env * current%amp)**2
           laser_inject_local = laser_inject_local + lfactor * laser_inject_sum
         END IF
         current => current%next

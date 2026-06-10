@@ -1520,7 +1520,7 @@ CONTAINS
       DO ispecies = 1, n_species
         IF (species_list(ispecies)%species_type /= c_species_id_photon) CYCLE
         DO jspecies = ispecies, n_species
-          IF (species_list(jspecies)%species_type == c_species_id_photon) CYCLE
+          IF (species_list(jspecies)%species_type /= c_species_id_photon) CYCLE
           DO ix = 1, nx
             DO iy = 1, ny
               CALL create_empty_partlist(new_lbw_electrons)
