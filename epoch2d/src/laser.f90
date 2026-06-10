@@ -13,6 +13,51 @@
 ! You should have received a copy of the GNU General Public License
 ! along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+
+! Some comments from Gemini:
+
+!!!!! The Big Picture: How laser.f90 is Organised
+
+!!! The laser module acts as an object-oriented class (within Fortran limits) for managing lasers. 
+! It uses a custom derived data type called laser_block (defined elsewhere, likely in a core data module) 
+! which acts like a struct containing all the properties of a single laser (amplitude, frequency, temporal profile,
+! spatial profile). The subroutines in this file fall into four main categories:
+
+!!!A. Initialisation and Memory Management
+
+! init_laser: Sets up a new laser_block with safe default values (e.g., -1.0_num) 
+! and allocates the spatial profile and phase arrays.
+
+! deallocate_laser(s): Cleans up memory when the simulation ends.
+
+! attach_laser: EPOCH allows multiple lasers on the same boundary. 
+! This routine links a newly created laser into a "linked list" for a specific boundary, 
+! allowing the code to loop through all active lasers later.
+
+! allocate_with_boundary: Allocates the arrays for spatial profiles. Notice the 1-ng : ny+ng syntax. 
+! ng stands for "number of ghost cells". EPOCH needs these arrays to cover not just the physical domain, but the overlapping parallel boundary cells too.
+
+!!! B. The Math Evaluators
+
+! populate_pack_from_laser & laser_update_{phase, profile, omega}: EPOCH has a built-in mathematical parser. 
+! When you write profile = gauss(y, 0, 10e-6) in your input.deck, these routines translate that text 
+! into numerical values across the grid at every time step using evaluate_with_parameters.
+
+! laser_time_profile: Calculates the temporal envelope (the time-varying amplitude of the laser pulse) 
+! at the current simulation time.
+
+!!! C. Diagnostics
+! calc_absorption: Computes the Poynting flux (electromagnetic energy transfer) across the boundaries 
+! to track how much laser energy was injected and how much scattered light left the domain.
+
+!!! D. The Core Physics (The Boundary Conditions)
+
+! outflow_bcs_x_min, outflow_bcs_x_max, outflow_bcs_y_min, outflow_bcs_y_max: These are the most critical 
+! subroutines for your project. They perform the actual physics of injecting the laser wave into the simulation box.
+
+
+
+
 MODULE laser
 
   USE custom_laser
@@ -69,7 +114,7 @@ CONTAINS
   END SUBROUTINE setup_laser_phases
 
 
-
+! Deallocate all memory at the end of the simulation for a single laser, and for the linked list of lasers on each boundary.
   SUBROUTINE deallocate_laser(laser)
 
     TYPE(laser_block), POINTER :: laser
@@ -89,7 +134,7 @@ CONTAINS
   END SUBROUTINE deallocate_laser
 
 
-
+! Deallocate the linked list of lasers on each boundary at the end of the simulation. This loops through the linked list and calls deallocate_laser for each one.
   SUBROUTINE deallocate_lasers
 
     TYPE(laser_block), POINTER :: current, next
@@ -104,8 +149,7 @@ CONTAINS
   END SUBROUTINE deallocate_lasers
 
 
-
-  ! Subroutine to attach a created laser object to the correct boundary
+! Subroutine to attach a created laser object to the correct boundary
   SUBROUTINE attach_laser(laser)
 
     TYPE(laser_block), POINTER :: laser
@@ -125,6 +169,9 @@ CONTAINS
     ELSE
       lasers => laser
     END IF
+
+    ! >>> INJECT OUR CUSTOM LINK HERE <<<
+    CALL custom_laser_spatial_setup(laser)
 
   END SUBROUTINE attach_laser
 
@@ -203,27 +250,40 @@ CONTAINS
   END SUBROUTINE laser_update_phase
 
 
-
   SUBROUTINE laser_update_profile(laser)
 
     TYPE(laser_block), POINTER :: laser
     INTEGER :: i, err
     TYPE(parameter_pack) :: parameters
+    
+    ! ---> ADD THIS DECLARATION <---
+    REAL(num) :: pos
 
     err = 0
     CALL populate_pack_from_laser(laser, parameters)
     SELECT CASE(laser%boundary)
       CASE(c_bd_x_min, c_bd_x_max)
         DO i = 0,ny
-          parameters%pack_iy = i
-          laser%profile(i) = &
-              evaluate_with_parameters(laser%profile_function, parameters, err)
+          ! ---> INJECT OUR CUSTOM ROUTING HERE <---
+          IF (laser%use_profile_function) THEN
+             parameters%pack_iy = i
+             laser%profile(i) = evaluate_with_parameters(laser%profile_function, parameters, err)
+          ELSE IF (use_2d_spatiotemporal) THEN
+             pos = y_min_local + i * dy
+             laser%profile(i) = custom_laser_profile(laser, pos)
+          END IF
         END DO
+        
       CASE(c_bd_y_min, c_bd_y_max)
         DO i = 0,nx
-          parameters%pack_ix = i
-          laser%profile(i) = &
-              evaluate_with_parameters(laser%profile_function, parameters, err)
+          ! ---> INJECT OUR CUSTOM ROUTING HERE <---
+          IF (laser%use_profile_function) THEN
+             parameters%pack_ix = i
+             laser%profile(i) = evaluate_with_parameters(laser%profile_function, parameters, err)
+          ELSE IF (use_2d_spatiotemporal) THEN
+             pos = x_min_local + i * dx
+             laser%profile(i) = custom_laser_profile(laser, pos)
+          END IF
         END DO
     END SELECT
 
@@ -342,7 +402,11 @@ CONTAINS
           ! evaluate the temporal evolution of the laser
           IF (time >= current%t_start .AND. time <= current%t_end) THEN
             IF (current%use_phase_function) CALL laser_update_phase(current)
-            IF (current%use_profile_function) CALL laser_update_profile(current)
+            
+            ! ---> TRIGGER FOR BOTH MATH STRINGS AND OUR 2D FILE <---
+            IF (current%use_profile_function .OR. use_2d_spatiotemporal) &
+                CALL laser_update_profile(current)
+
             t_env = laser_time_profile(current) * current%amp
             DO i = 0,ny
               base = t_env * current%profile(i) &

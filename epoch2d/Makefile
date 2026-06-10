@@ -69,8 +69,8 @@ endif
 # gfortran
 # ========
 ifeq ($(strip $(COMPILER)),gfortran)
-  FFLAGS = -O3 -g -std=f2003
-
+  #FFLAGS = -O3 -g -std=f2003
+  FFLAGS = -O3 -g -std=f2003 -march=native -funroll-loops -ffast-math -fallow-argument-mismatch
   GNUVER := $(shell gfortran -dumpversion | head -1 \
       | sed 's/[^0-9\.]*\([0-9\.]\+\).*/\1/')
   GNUMAJOR := $(shell echo $(GNUVER) | cut -f1 -d\.)
