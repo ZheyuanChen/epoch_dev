@@ -1,0 +1,52 @@
+EPOCH Git Workflow Summary (Upstream + Local Development)
+
+Repository Structure
+
+-   upstream/main : Official Warwick-Plasma EPOCH repository
+-   origin/main : Your personal fork (backup / optional)
+-   my-epoch-mods : Your working development branch (physics
+    modifications)
+
+Daily Workflow (Making Changes)
+
+1.  Switch to development branch: git checkout my-epoch-mods
+
+2.  Make code changes
+
+3.  Commit changes regularly: git add git commit -m “Describe physics
+    modification”
+
+Rule: Every meaningful change should be committed.
+
+Updating from Official EPOCH (Upstream)
+
+1.  Fetch latest upstream changes: git fetch upstream
+
+2.  Switch to your development branch: git checkout my-epoch-mods
+
+3.  Merge upstream updates: git merge upstream/main
+
+    OR (cleaner history, optional): git rebase upstream/main
+
+4.  Resolve conflicts if they appear, then commit.
+
+Before Major Updates (Recommended)
+
+-   Commit current work: git commit -am “Checkpoint before update”
+
+-   Review changes: git log –oneline -10
+
+Good Practices
+
+-   Keep ‘main’ branch clean (tracks upstream only)
+-   Do NOT work directly on ‘main’
+-   Always develop in ‘my-epoch-mods’
+-   Treat upstream as read-only source of updates
+-   Commit frequently for reproducibility (important for simulations)
+
+Optional Enhancements
+
+-   Tag stable simulation versions: git tag sim-run-v1
+
+-   Consider renaming branch for clarity: git branch -m my-epoch-mods
+    epoch-dev
