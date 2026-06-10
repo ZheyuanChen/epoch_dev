@@ -1,3 +1,7 @@
+# Key customisations:
+# Photons (QED),  Probe time, Higuera-Cary push, trident photons, and Bremsstrahlung.
+# GFortran Flag: FFLAGS = -O3 -g -std=f2003 -march=native -funroll-loops -ffast-math -fallow-argument-mismatch
+
 # Specify a particular compiler with "make COMPILER=pgi", etc.
 # Specify debugging flags with "make MODE=debug"
 # If floating-point consistency is required then set the flag "CONS=1"
@@ -201,13 +205,13 @@ DEFINES := $(DEFINE)
 #DEFINES += $(D)NO_PARTICLE_PROBES
 
 # Probes will also output the time particles cross the probe
-#DEFINES += $(D)PROBE_TIME
+DEFINES += $(D)PROBE_TIME
 
 # Use second order particle weighting (default is third order).
 #DEFINES += $(D)PARTICLE_SHAPE_TOPHAT
 
 # Use fifth order particle weighting (default is third order).
-#DEFINES += $(D)PARTICLE_SHAPE_BSPLINE3
+DEFINES += $(D)PARTICLE_SHAPE_BSPLINE3
 
 # Include a unique global particle ID. The first flag defines the ID using
 # an 8-byte integer, the second uses 4-bytes.
@@ -215,13 +219,13 @@ DEFINES := $(DEFINE)
 #DEFINES += $(D)PARTICLE_ID4
 
 # Include QED routines
-#DEFINES += $(D)PHOTONS
+DEFINES += $(D)PHOTONS
 
 # Use the Trident process for pair production
-#DEFINES += $(D)TRIDENT_PHOTONS
+DEFINES += $(D)TRIDENT_PHOTONS
 
 # Include bremsstrahlung routines
-#DEFINES += $(D)BREMSSTRAHLUNG
+DEFINES += $(D)BREMSSTRAHLUNG
 
 # Use Intel-specific 'mm_prefetch' calls to load next particle in the list
 # into cache ahead of time. Gives ~10% speed-up with Intel 12 compilers.
@@ -260,7 +264,7 @@ DEFINES := $(DEFINE)
 #DEFINES += $(D)WORK_DONE_INTEGRATED
 
 # Higuera-Cary push
-#DEFINES += $(D)HC_PUSH
+DEFINES += $(D)HC_PUSH
 
 # Disable MPI3 features
 #DEFINES += $(D)NO_MPI3
