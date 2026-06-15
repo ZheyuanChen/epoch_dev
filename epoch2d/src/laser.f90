@@ -218,7 +218,7 @@ CONTAINS
       RETURN
     END IF
 
-    laser_time_profile = custom_laser_time_profile(laser)
+    laser_time_profile = custom_laser_time_profile(laser) ! There might be an overwriting issue about time_profile. Need to recheck the logic.
 
   END FUNCTION laser_time_profile
 

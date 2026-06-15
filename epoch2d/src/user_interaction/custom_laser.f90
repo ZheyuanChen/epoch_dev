@@ -211,20 +211,33 @@ CONTAINS
 
     ! --- 2. Locate the Bounding Cell Box ---
     ! Find lower index spatial bounding point
-    idx_y = 1
-    DO WHILE (file_y_coords(idx_y+1) < pos .AND. idx_y < n_y_points - 1)
-       idx_y = idx_y + 1
-    END DO
+    
+    ! The commented code should apply for an arbitraryly spaced laser profile grid. However, this is an O(n) search and is not efficient for large grids. 
+    ! Instead, we can use a direct index calculation for uniform grids, which is O(1). The Python script guarantees uniform spacing using np.linspace. 
+    
+    !!!!!! Must ensure that the laser profile file is generated with uniform spacing for this optimization to be valid. !!!!!!
+
+    !idx_y = 1
+    !DO WHILE (file_y_coords(idx_y+1) < pos .AND. idx_y < n_y_points - 1)
+    !   idx_y = idx_y + 1
+    !END DO
 
     ! Find lower index temporal bounding point
-    idx_t = 1
-    DO WHILE (file_t_coords(idx_t+1) < time .AND. idx_t < n_t_points - 1)
-       idx_t = idx_t + 1
-    END DO
+    !idx_t = 1
+    !DO WHILE (file_t_coords(idx_t+1) < time .AND. idx_t < n_t_points - 1)
+    !   idx_t = idx_t + 1
+    !END DO
 
+    ! Direct index calculation (O(1)) — valid only for uniform grids. This is likely to be visited again if we decide to support non-uniform grids in the future.
+    idx_y = INT((pos  - file_y_coords(1)) / (file_y_coords(2) - file_y_coords(1))) + 1
+    idx_t = INT((time - file_t_coords(1)) / (file_t_coords(2) - file_t_coords(1))) + 1
+
+    ! Clamp to valid interpolation range [1, n-1]
+    idx_y = MAX(1, MIN(idx_y, n_y_points - 1))
+    idx_t = MAX(1, MIN(idx_t, n_t_points - 1))
 
     ! --- 3. Bilinear Interpolation Math ---
-    ! Compute normalized fractional positions within the grid cell
+    ! Compute normalised fractional positions within the grid cell
     u = (pos - file_y_coords(idx_y)) / (file_y_coords(idx_y+1) - file_y_coords(idx_y))
     v = (time - file_t_coords(idx_t)) / (file_t_coords(idx_t+1) - file_t_coords(idx_t))
 
