@@ -19,7 +19,7 @@ MODULE custom_laser
   IMPLICIT NONE
 
   ! A global switch to toggle between the 1D spatial loader and  2D spatiotemporal matrix without rewriting code
-  LOGICAL, SAVE :: use_2d_spatiotemporal = .TRUE.
+  !LOGICAL, SAVE :: use_2d_spatiotemporal = .TRUE.
 
 ! Persistent storage arrays for the 2D spatiotemporal profile
   INTEGER, SAVE :: n_y_points = 0
@@ -53,7 +53,7 @@ CONTAINS
     ! Arrays to hold the raw file data
     REAL(num), ALLOCATABLE, DIMENSION(:) :: file_coords, file_values
     
-    IF (use_2d_spatiotemporal) RETURN  ! If we're using the 2D spatiotemporal profile, skip the 1D spatial setup
+    !IF (use_2d_spatiotemporal) RETURN  ! If we're using the 2D spatiotemporal profile, skip the 1D spatial setup
 
     !filename = 'spatial_profile.dat'
     filename = TRIM(data_dir) // '/' // 'spatial_profile.dat'

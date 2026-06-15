@@ -251,6 +251,20 @@ CONTAINS
       RETURN
     END IF
 
+    !!! Add-on for custom laser profiles and spatiotemporal profiles.
+    ! Enable the input.deck to specify whether to use a custom profile or an analytical (the usual way) profile. 
+    ! These two logical fields will be set in the laser block in input.deck. See also src/shared_data.F90.
+    IF (str_cmp(element, 'use_custom_profile')) THEN
+      working_laser%use_custom_profile = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'use_spatiotemporal_profile')) THEN
+      working_laser%use_spatiotemporal = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+    !!!
+
     errcode = c_err_unknown_element
 
   END FUNCTION laser_block_handle_element

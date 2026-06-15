@@ -259,19 +259,19 @@ CONTAINS
     INTEGER :: i, err
     TYPE(parameter_pack) :: parameters
     
-    ! ---> ADD THIS DECLARATION <---
+    !!!  ADD THIS DECLARATION for custom laser profile
     REAL(num) :: pos
 
     err = 0
     CALL populate_pack_from_laser(laser, parameters)
     SELECT CASE(laser%boundary)
+      !!! Changed the logic here to allow for custom laser profiles. If a custom profile is specified, it will be used instead of the profile_function. This allows for more flexibility in defining the spatial profile of the laser.
       CASE(c_bd_x_min, c_bd_x_max)
         DO i = 0,ny
-          ! ---> INJECT OUR CUSTOM ROUTING HERE <---
           IF (laser%use_profile_function) THEN
              parameters%pack_iy = i
              laser%profile(i) = evaluate_with_parameters(laser%profile_function, parameters, err)
-          ELSE IF (use_2d_spatiotemporal) THEN
+          ELSE IF (laser%use_custom_profile .AND. laser%use_spatiotemporal) THEN
              pos = y_min_local + i * dy
              laser%profile(i) = custom_laser_profile(laser, pos)
           END IF
@@ -279,11 +279,10 @@ CONTAINS
         
       CASE(c_bd_y_min, c_bd_y_max)
         DO i = 0,nx
-          ! ---> INJECT OUR CUSTOM ROUTING HERE <---
           IF (laser%use_profile_function) THEN
              parameters%pack_ix = i
              laser%profile(i) = evaluate_with_parameters(laser%profile_function, parameters, err)
-          ELSE IF (use_2d_spatiotemporal) THEN
+          ELSE IF (laser%use_custom_profile .AND. laser%use_spatiotemporal) THEN
              pos = x_min_local + i * dx
              laser%profile(i) = custom_laser_profile(laser, pos)
           END IF
@@ -407,7 +406,8 @@ CONTAINS
             IF (current%use_phase_function) CALL laser_update_phase(current)
             
             ! ---> TRIGGER FOR BOTH MATH STRINGS AND OUR 2D FILE <---
-            IF (current%use_profile_function .OR. use_2d_spatiotemporal) &
+            IF (current%use_profile_function .OR. &
+                (current%use_custom_profile .AND. current%use_spatiotemporal)) &
                 CALL laser_update_profile(current)
 
             t_env = laser_time_profile(current) * current%amp
