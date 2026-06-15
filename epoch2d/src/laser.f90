@@ -170,8 +170,15 @@ CONTAINS
       lasers => laser
     END IF
 
+    !!! Safe guarding
+    IF (.NOT. laser%use_custom_profile .OR. &
+        .NOT. laser%use_spatiotemporal) &
+        CALL custom_laser_spatial_setup(laser)
+    !!!
+
+
     ! >>> INJECT OUR CUSTOM LINK HERE <<<
-    CALL custom_laser_spatial_setup(laser)
+    !CALL custom_laser_spatial_setup(laser)
 
   END SUBROUTINE attach_laser
 
