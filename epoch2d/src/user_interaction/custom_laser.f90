@@ -53,6 +53,11 @@ CONTAINS
     ! Arrays to hold the raw file data
     REAL(num), ALLOCATABLE, DIMENSION(:) :: file_coords, file_values
     
+    !!!
+    ! FIX the bug that EPOCH always calls for this subrountine: Only proceed if a custom profile is requested AND it is NOT 2D spatiotemporal
+    IF (.NOT. laser%use_custom_profile .OR. laser%use_spatiotemporal) RETURN
+
+
     !IF (use_2d_spatiotemporal) RETURN  ! If we're using the 2D spatiotemporal profile, skip the 1D spatial setup
 
     !filename = 'spatial_profile.dat'
