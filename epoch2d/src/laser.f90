@@ -202,7 +202,10 @@ CONTAINS
   END SUBROUTINE populate_pack_from_laser
 
 
-
+  ! There is a potential issue of overwriting the time_profile.
+  ! If, in addition to using a temporal_spatial customised profile, one also specifies a t_profile in the laser block, then the overall laser profile will 
+  ! be the product of the two. This is not necessarily a problem, but it is something to be aware of. The logic here is that if a t_profile is specified, it will be used, otherwise the custom profile will be used.
+  ! Therefore, if one wants to use a custom temporal profile, one should not specify a t_profile in the laser block. This is something that could be improved in future versions of EPOCH.
   FUNCTION laser_time_profile(laser)
 
     TYPE(laser_block), POINTER :: laser
