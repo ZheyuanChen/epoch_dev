@@ -143,50 +143,60 @@ CONTAINS
   END SUBROUTINE custom_laser_spatial_setup
 
   SUBROUTINE load_temporal_spatial_profile()
-    INTEGER :: io_err, i, j
-    ! 1. Increase the string length and remove the hardcoded assignment here
-    CHARACTER(LEN=256) :: full_filename 
+    INTEGER :: io_err, i, j, mpi_err
+    CHARACTER(LEN=256) :: full_filename
 
     IF (profile_loaded) RETURN
 
-    ! Build the exact path
     full_filename = TRIM(data_dir) // '/' // 'temporal_spatial_profile.dat'
 
-    ! Open the file
-    OPEN(UNIT=100, FILE=TRIM(full_filename), STATUS='OLD', ACTION='READ', IOSTAT=io_err)
-    IF (io_err /= 0) THEN
-       IF (rank == 0) PRINT *, "ERROR: Could not open ", TRIM(full_filename)
-       CALL MPI_ABORT(mpi_comm_world, 1, io_err)
+    ! --- 1. RANK 0 READS DIMENSIONS AND COORDINATES ---
+    IF (rank == 0) THEN
+        OPEN(UNIT=100, FILE=TRIM(full_filename), STATUS='OLD', &
+             ACTION='READ', IOSTAT=io_err)
+        IF (io_err /= 0) THEN
+            PRINT *, "ERROR: Could not open ", TRIM(full_filename)
+            CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
+        END IF
+
+        READ(100, *) n_t_points, n_y_points
     END IF
 
-    ! 1. Read matrix dimensions from line 1
-    ! FIX: Python writes n_t then n_y. Read them in that exact order.
-    READ(100, *) n_t_points, n_y_points
+    ! --- 2. BROADCAST DIMENSIONS SO ALL RANKS CAN ALLOCATE ---
+    CALL MPI_BCAST(n_t_points, 1, MPI_INTEGER, 0, mpi_comm_world, mpi_err)
+    CALL MPI_BCAST(n_y_points, 1, MPI_INTEGER, 0, mpi_comm_world, mpi_err)
 
-    ! 2. Allocate memory for coordinates and field matrix
-    ! First index = Space (y), Second index = Time (t)
     ALLOCATE(file_y_coords(n_y_points))
     ALLOCATE(file_t_coords(n_t_points))
     ALLOCATE(file_field_matrix(n_y_points, n_t_points))
 
-    ! 3. Read the coordinate arrays
-    READ(100, *) file_y_coords  ! Line 2 from Python
-    READ(100, *) file_t_coords  ! Line 3 from Python
+    ! --- 3. RANK 0 READS DATA ---
+    IF (rank == 0) THEN
+        READ(100, *) file_y_coords
+        READ(100, *) file_t_coords
 
-    ! 4. Read the 2D block data matrix
-    ! FIX: Python wrote n_t rows. Each row holds all spatial points for a given time step.
-    DO j = 1, n_t_points
-       ! Reads an entire spatial row into the first index (y), advancing the time index (j)
-       READ(100, *) file_field_matrix(:, j)
-    END DO
+        DO j = 1, n_t_points
+            READ(100, *) file_field_matrix(:, j)
+        END DO
 
-    CLOSE(100)
+        CLOSE(100)
+    END IF
+
+    ! --- 4. BROADCAST DATA TO ALL RANKS ---
+    CALL MPI_BCAST(file_y_coords,    n_y_points,              &
+                   MPI_DOUBLE_PRECISION, 0, mpi_comm_world, mpi_err)
+    CALL MPI_BCAST(file_t_coords,    n_t_points,              &
+                   MPI_DOUBLE_PRECISION, 0, mpi_comm_world, mpi_err)
+    CALL MPI_BCAST(file_field_matrix, n_y_points * n_t_points, &
+                   MPI_DOUBLE_PRECISION, 0, mpi_comm_world, mpi_err)
+
     profile_loaded = .TRUE.
 
     IF (rank == 0) THEN
-       PRINT *, ">>> Custom 2D Spatiotemporal Profile Loaded Successfully! <<<"
-       PRINT *, "    Grid Size: ", n_y_points, " (Spatial) x ", n_t_points, " (Temporal)"
+        PRINT *, ">>> Custom 2D Spatiotemporal Profile Loaded Successfully! <<<"
+        PRINT *, "    Grid Size: ", n_y_points, " (Spatial) x ", n_t_points, " (Temporal)"
     END IF
+
   END SUBROUTINE load_temporal_spatial_profile
 
   REAL(num) FUNCTION custom_laser_profile(laser, pos)
