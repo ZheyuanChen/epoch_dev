@@ -187,13 +187,18 @@ CONTAINS
       RETURN
     END IF
 
+    ! Deallocate_stack is defined in src/parser/shunt.F90:194-210.
+    ! The primitive_stack  type is defined at shared_data.F90:54-60. 
     IF (str_cmp(element, 'profile')) THEN
-      CALL initialise_stack(working_laser%profile_function)
-      CALL tokenize(value, working_laser%profile_function, errcode)
-      working_laser%profile = 0.0_num
-      CALL laser_update_profile(working_laser)
+      CALL initialise_stack(working_laser%profile_function) ! allocates entries(:) and sets init = .TRUE..
+      CALL tokenize(value, working_laser%profile_function, errcode) ! tokenise: parses the expression (e.g. gauss(y,0,1e-6)) and turns a stack of tokens in entries(:) and sets is_time_varying = .TRUE. if the expression contains time.
+      working_laser%profile = 0.0_num ! sets the profile to 0.0_num (the default value) before evaluating the expression.
+      CALL laser_update_profile(working_laser) ! goes through every point, evaluates the expression in entries(:) and sets profile to the evaluated value.
+      
+      ! At this point, EPOCH wants to know if we should keep the token (i.e. the expression) in memory for later evaluation (if the expression is time-varying) or if we can deallocate it (if the expression is not time-varying).
+
       IF (working_laser%profile_function%is_time_varying) THEN
-        working_laser%use_profile_function = .TRUE.
+        working_laser%use_profile_function = .TRUE. ! in which case we wnat to keep the expression and evaluate it at every time step.
       ELSE
         CALL deallocate_stack(working_laser%profile_function)
       END IF
@@ -223,6 +228,7 @@ CONTAINS
       RETURN
     END IF
 
+    ! If we use t_profile, first set the logic flag use_time_function to TRUE
     IF (str_cmp(element, 't_profile')) THEN
       working_laser%use_time_function = .TRUE.
       CALL initialise_stack(working_laser%time_function)

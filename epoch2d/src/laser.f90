@@ -273,6 +273,15 @@ CONTAINS
     CALL populate_pack_from_laser(laser, parameters)
     SELECT CASE(laser%boundary)
       !!! Changed the logic here to allow for custom laser profiles. If a custom profile is specified, it will be used instead of the profile_function. This allows for more flexibility in defining the spatial profile of the laser.
+      
+      ! Note that use_profile_function is set to be FALSE in default (in laser.f90).
+      ! it is set to TRUE in deck_laser_block.f90 if the profile is time-varying.
+
+      ! So, here the logic is: 
+      ! If we use an analytical time-independent profile, then use_profile_function is set to FALSE and we do not need to update the profile at every time step (it is set at the start of the simulation)
+      ! If we use an analytical time-varying profile, then use_profile_function is set to TRUE and we call evaluate_with_parameters to update the profile at every time step
+      ! If we use a custom spatiotemporal profile, then use_custom_profile and use_spatiotemporal are both set to TRUE and we call custom_laser_profile to update the profile at every time step
+      ! If we use a custom spatial profile, then use_custom_profile is set to TRUE and use_spatiotemporal is set to FALSE, and we do not need to update the profile at every time step (it is set at the start of the simulation)
       CASE(c_bd_x_min, c_bd_x_max)
         DO i = 0,ny
           IF (laser%use_profile_function) THEN
@@ -413,6 +422,20 @@ CONTAINS
             IF (current%use_phase_function) CALL laser_update_phase(current)
             
             ! ---> TRIGGER FOR BOTH MATH STRINGS AND OUR 2D FILE <---
+            !!! Here, the logic is: if we use the normal way to declare a laser profile AND we don't declare a t_profile, 
+            !!! then the first condition is met (I think that if we use a time-independent laser profile, EPOCH initialises
+            !!! it at the start and then TURN use_profile_function to FALSE, in which case we don't need and it doesn't use update_laser_profile)
+            !!! If we use spatiotemporal profile (in which case both conditions in the second line are met), then we need to call laser_update_profile
+            !!! If we only use a spatial profile, then there is no need to call laser_update_profile as the profile is initiated at the start. 
+            
+            ! For reference, in laser_block_handle_element function in deck_laser_block.f90, we have the following:
+            ! One can see that only if the profile is time varying, then use_profile_function is declared TRUE.
+            !IF (working_laser%profile_function%is_time_varying) THEN
+            !working_laser%use_profile_function = .TRUE.
+            !ELSE
+            !  CALL deallocate_stack(working_laser%profile_function)
+
+            ! Based on this, I think this is the correct way.
             IF (current%use_profile_function .OR. &
                 (current%use_custom_profile .AND. current%use_spatiotemporal)) &
                 CALL laser_update_profile(current)
