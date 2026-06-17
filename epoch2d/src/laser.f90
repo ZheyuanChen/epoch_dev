@@ -222,7 +222,7 @@ CONTAINS
 
     err = 0
     CALL populate_pack_from_laser(laser, parameters)
-    IF (laser%use_time_function) THEN
+    IF (laser%use_time_function) THEN ! use_time_function is set to TRUE if there is a line specifying t_profile=... in laser block
       laser_time_profile = evaluate_with_parameters(laser%time_function, &
           parameters, err)
       RETURN
@@ -281,28 +281,34 @@ CONTAINS
       ! If we use an analytical time-independent profile, then use_profile_function is set to FALSE and we do not need to update the profile at every time step (it is set at the start of the simulation)
       ! If we use an analytical time-varying profile, then use_profile_function is set to TRUE and we call evaluate_with_parameters to update the profile at every time step
       ! If we use a custom spatiotemporal profile, then use_custom_profile and use_spatiotemporal are both set to TRUE and we call custom_laser_profile to update the profile at every time step
+      
       ! If we use a custom spatial profile, then use_custom_profile is set to TRUE and use_spatiotemporal is set to FALSE, and we do not need to update the profile at every time step (it is set at the start of the simulation)
+      
+
+      ! Fix proposed by Issue 1: rewrite the condition here, adding laser_profile_function%init and changing the sequence.
       CASE(c_bd_x_min, c_bd_x_max)
         DO i = 0,ny
-          IF (laser%use_profile_function) THEN
-             parameters%pack_iy = i
-             laser%profile(i) = evaluate_with_parameters(laser%profile_function, parameters, err)
-          ELSE IF (laser%use_custom_profile .AND. laser%use_spatiotemporal) THEN
-             pos = y_min_local + i * dy
-             laser%profile(i) = custom_laser_profile(laser, pos)
+          IF (laser%use_custom_profile .AND. laser%use_spatiotemporal) THEN
+            pos = y_min_local + i * dy
+            laser%profile(i) = custom_laser_profile(laser, pos)
+          ELSE IF (laser%use_profile_function .OR. laser%profile_function%init) THEN
+            parameters%pack_iy = i
+            laser%profile(i) = evaluate_with_parameters(laser%profile_function, parameters, err)
           END IF
         END DO
-        
+
       CASE(c_bd_y_min, c_bd_y_max)
         DO i = 0,nx
-          IF (laser%use_profile_function) THEN
-             parameters%pack_ix = i
-             laser%profile(i) = evaluate_with_parameters(laser%profile_function, parameters, err)
-          ELSE IF (laser%use_custom_profile .AND. laser%use_spatiotemporal) THEN
-             pos = x_min_local + i * dx
-             laser%profile(i) = custom_laser_profile(laser, pos)
+          IF (laser%use_custom_profile .AND. laser%use_spatiotemporal) THEN
+            pos = x_min_local + i * dx
+            laser%profile(i) = custom_laser_profile(laser, pos)
+          ELSE IF (laser%use_profile_function .OR. laser%profile_function%init) THEN
+            parameters%pack_ix = i
+            laser%profile(i) = evaluate_with_parameters(laser%profile_function, parameters, err)
           END IF
         END DO
+
+      
     END SELECT
 
   END SUBROUTINE laser_update_profile
@@ -384,7 +390,7 @@ CONTAINS
   END SUBROUTINE set_laser_dt
 
 
-
+  ! In a normal running: outflow_bcs_x_min is part of the final B-boundary update once per main timestep, plus one startup call during initial field setup.
   SUBROUTINE outflow_bcs_x_min
 
     REAL(num) :: t_env
@@ -440,7 +446,7 @@ CONTAINS
                 (current%use_custom_profile .AND. current%use_spatiotemporal)) &
                 CALL laser_update_profile(current)
 
-            t_env = laser_time_profile(current) * current%amp
+            t_env = laser_time_profile(current) * current%amp ! SO this line multiplies the profile set by t_profile and the profile set by either profile = ... or the customised dat file.
             DO i = 0,ny
               base = t_env * current%profile(i) &
                 * SIN(current%current_integral_phase + current%phase(i))

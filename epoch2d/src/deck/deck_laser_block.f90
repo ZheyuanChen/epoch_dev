@@ -57,6 +57,10 @@ CONTAINS
     working_laser%use_phase_function = .TRUE.
     working_laser%use_profile_function = .TRUE.
     working_laser%use_omega_function = .FALSE.
+   
+    ! Claude thinks the following newly-added variables should be declared here.
+    working_laser%use_custom_profile = .FALSE.
+    working_laser%use_spatiotemporal = .TRUE.
 
   END SUBROUTINE laser_block_start
 
@@ -98,7 +102,7 @@ CONTAINS
       IF (boundary_set) RETURN
       boundary = as_boundary_print(value, element, errcode)
       boundary_set = .TRUE.
-      CALL init_laser(boundary, working_laser)
+      CALL init_laser(boundary, working_laser) ! At this point use_profile_function = FALSE
       RETURN
     END IF
 
