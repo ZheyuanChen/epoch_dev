@@ -289,7 +289,9 @@ CONTAINS
       CASE(c_bd_x_min, c_bd_x_max)
         DO i = 0,ny
           IF (laser%use_custom_profile .AND. laser%use_spatiotemporal) THEN
-            pos = y_min_local + i * dy
+            ! Use y(i) (cell centre) to match the analytical evaluator,
+            ! which resolves the deck variable 'y' at y(pack_iy).
+            pos = y(i)
             laser%profile(i) = custom_laser_profile(laser, pos)
           ELSE IF (laser%use_profile_function .OR. laser%profile_function%init) THEN
             parameters%pack_iy = i
@@ -300,7 +302,7 @@ CONTAINS
       CASE(c_bd_y_min, c_bd_y_max)
         DO i = 0,nx
           IF (laser%use_custom_profile .AND. laser%use_spatiotemporal) THEN
-            pos = x_min_local + i * dx
+            pos = x(i)
             laser%profile(i) = custom_laser_profile(laser, pos)
           ELSE IF (laser%use_profile_function .OR. laser%profile_function%init) THEN
             parameters%pack_ix = i

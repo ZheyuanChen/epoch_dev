@@ -105,8 +105,9 @@ CONTAINS
       CASE(c_bd_x_min, c_bd_x_max)
         ! Laser is on a vertical boundary, varying along the Y-axis
         DO i = 0, ny
-          ! Calculate absolute global physical Y coordinate using local rank boundary
-          pos = y_min_local + i * dy
+          ! Use cell-centre coordinate y(i), consistent with the analytical
+          ! evaluator which resolves 'y' at y(pack_iy).
+          pos = y(i)
           
           ! Perform a simple linear search & interpolation from file data
           IF (pos <= file_coords(1)) THEN
@@ -128,8 +129,7 @@ CONTAINS
       CASE(c_bd_y_min, c_bd_y_max)
         ! Laser is on a horizontal boundary, varying along the X-axis
         DO i = 0, nx
-          ! Calculate absolute global physical X coordinate using local rank boundary
-          pos = x_min_local + i * dx
+          pos = x(i)
           
           ! Perform a simple linear search & interpolation from file data
           IF (pos <= file_coords(1)) THEN
