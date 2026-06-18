@@ -818,6 +818,10 @@ MODULE shared_data
     ! These two logical fields will be set in the laser block in input.deck. See src/deck/deck_laser_block.f90 for details.
     LOGICAL :: use_custom_profile = .FALSE.
     LOGICAL :: use_spatiotemporal = .TRUE.
+    ! Path to the custom profile data file. If blank, defaults to
+    ! 'temporal_spatial_profile.dat' (2D) or 'spatial_profile.dat' (1D).
+    ! Relative paths are resolved from data_dir; absolute paths used as-is.
+    CHARACTER(LEN=c_max_path_length) :: profile_data_file = ' '
   !!!  
 
     TYPE(primitive_stack) :: time_function, phase_function, profile_function

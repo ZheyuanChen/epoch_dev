@@ -58,9 +58,12 @@ CONTAINS
     working_laser%use_profile_function = .TRUE.
     working_laser%use_omega_function = .FALSE.
    
-    ! Claude thinks the following newly-added variables should be declared here.
+    ! Explicitly initialise custom-profile flags and filename for each new
+    ! laser block. Blank profile_data_file triggers the default filename
+    ! ('temporal_spatial_profile.dat' or 'spatial_profile.dat') at load time.
     working_laser%use_custom_profile = .FALSE.
     working_laser%use_spatiotemporal = .TRUE.
+    working_laser%profile_data_file = ' '
 
   END SUBROUTINE laser_block_start
 
@@ -271,6 +274,15 @@ CONTAINS
 
     IF (str_cmp(element, 'use_spatiotemporal_profile')) THEN
       working_laser%use_spatiotemporal = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Parse the custom profile data filename. The value can be:
+    !   - A plain filename (e.g. 'TS01.dat'), resolved relative to data_dir
+    !   - An absolute path (e.g. '/home/user/profiles/TS01.dat'), used as-is
+    ! If omitted, the default filenames are used for backward compatibility.
+    IF (str_cmp(element, 'profile_data_file')) THEN
+      working_laser%profile_data_file = TRIM(ADJUSTL(value))
       RETURN
     END IF
     !!!

@@ -45,23 +45,30 @@ CONTAINS
   SUBROUTINE custom_laser_spatial_setup(laser)
     TYPE(laser_block), INTENT(INOUT) :: laser
     
-    CHARACTER(LEN=256) :: filename
+    CHARACTER(LEN=c_max_path_length) :: filename
     INTEGER :: file_unit, i, n_points, err
     REAL(num) :: pos, weight
     INTEGER :: idx_low, idx_high
-    
+
     ! Arrays to hold the raw file data
     REAL(num), ALLOCATABLE, DIMENSION(:) :: file_coords, file_values
-    
-    !!!
-    ! FIX the bug that EPOCH always calls for this subrountine: Only proceed if a custom profile is requested AND it is NOT 2D spatiotemporal
+
+    ! Only proceed for the 1D spatial custom path (not 2D spatiotemporal)
     IF (.NOT. laser%use_custom_profile .OR. laser%use_spatiotemporal) RETURN
 
-
-    !IF (use_2d_spatiotemporal) RETURN  ! If we're using the 2D spatiotemporal profile, skip the 1D spatial setup
-
-    !filename = 'spatial_profile.dat'
-    filename = TRIM(data_dir) // '/' // 'spatial_profile.dat'
+    ! Resolve the profile data filename:
+    !   - If the user specified profile_data_file in the deck, use it
+    !     (absolute paths used as-is, relative paths resolved from data_dir)
+    !   - Otherwise fall back to the legacy default 'spatial_profile.dat'
+    IF (LEN_TRIM(laser%profile_data_file) > 0) THEN
+      IF (laser%profile_data_file(1:1) == '/') THEN
+        filename = TRIM(laser%profile_data_file)
+      ELSE
+        filename = TRIM(data_dir) // '/' // TRIM(laser%profile_data_file)
+      END IF
+    ELSE
+      filename = TRIM(data_dir) // '/' // 'spatial_profile.dat'
+    END IF
     file_unit = 99 ! Explicit assignment to satisfy strict -std=f2003 standard
     
     ! --- 1. RANK 0 READS THE FILE ---
@@ -147,13 +154,23 @@ CONTAINS
 
   END SUBROUTINE custom_laser_spatial_setup
 
-  SUBROUTINE load_temporal_spatial_profile()
+  ! Load a 2D spatiotemporal profile from the given filename.
+  ! Absolute paths are used directly; relative paths are resolved from data_dir.
+  ! Only loads once (guarded by profile_loaded) — the first laser to trigger
+  ! this call determines which file is read.
+  SUBROUTINE load_temporal_spatial_profile(profile_filename)
+    CHARACTER(LEN=*), INTENT(IN) :: profile_filename
     INTEGER :: io_err, i, j, mpi_err
-    CHARACTER(LEN=256) :: full_filename
+    CHARACTER(LEN=c_max_path_length) :: full_filename
 
     IF (profile_loaded) RETURN
 
-    full_filename = TRIM(data_dir) // '/' // 'temporal_spatial_profile.dat'
+    ! Resolve absolute vs relative path
+    IF (profile_filename(1:1) == '/') THEN
+      full_filename = TRIM(profile_filename)
+    ELSE
+      full_filename = TRIM(data_dir) // '/' // TRIM(profile_filename)
+    END IF
 
     ! --- 1. RANK 0 READS DIMENSIONS AND COORDINATES ---
     IF (rank == 0) THEN
@@ -209,9 +226,18 @@ CONTAINS
     REAL(num), INTENT(IN) :: pos
     INTEGER :: idx_y, idx_t
     REAL(num) :: u, v, q11, q12, q21, q22
+    CHARACTER(LEN=c_max_path_length) :: fname
 
-    ! Ensure data is loaded into memory
-    IF (.NOT. profile_loaded) CALL load_temporal_spatial_profile()
+    ! Ensure the 2D profile data is loaded into memory on first call.
+    ! Use the deck-specified filename if given, otherwise the legacy default.
+    IF (.NOT. profile_loaded) THEN
+      IF (LEN_TRIM(laser%profile_data_file) > 0) THEN
+        fname = laser%profile_data_file
+      ELSE
+        fname = 'temporal_spatial_profile.dat'
+      END IF
+      CALL load_temporal_spatial_profile(fname)
+    END IF
 
     ! Default return value if coordinates fall completely outside our file scope
     custom_laser_profile = 0.0_num
