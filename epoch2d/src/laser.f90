@@ -523,7 +523,9 @@ CONTAINS
           ! evaluate the temporal evolution of the laser
           IF (time >= current%t_start .AND. time <= current%t_end) THEN
             IF (current%use_phase_function) CALL laser_update_phase(current)
-            IF (current%use_profile_function) CALL laser_update_profile(current)
+            IF (current%use_profile_function .OR. &
+                (current%use_custom_profile .AND. current%use_spatiotemporal)) &
+                CALL laser_update_profile(current)
             t_env = laser_time_profile(current) * current%amp
             DO i = 0,ny
               base = t_env * current%profile(i) &
@@ -599,7 +601,9 @@ CONTAINS
           ! evaluate the temporal evolution of the laser
           IF (time >= current%t_start .AND. time <= current%t_end) THEN
             IF (current%use_phase_function) CALL laser_update_phase(current)
-            IF (current%use_profile_function) CALL laser_update_profile(current)
+            IF (current%use_profile_function .OR. &
+                (current%use_custom_profile .AND. current%use_spatiotemporal)) &
+                CALL laser_update_profile(current)
             t_env = laser_time_profile(current) * current%amp
             DO i = 0,nx
               base = t_env * current%profile(i) &
@@ -675,7 +679,9 @@ CONTAINS
           ! evaluate the temporal evolution of the laser
           IF (time >= current%t_start .AND. time <= current%t_end) THEN
             IF (current%use_phase_function) CALL laser_update_phase(current)
-            IF (current%use_profile_function) CALL laser_update_profile(current)
+            IF (current%use_profile_function .OR. &
+                (current%use_custom_profile .AND. current%use_spatiotemporal)) &
+                CALL laser_update_profile(current)
             t_env = laser_time_profile(current) * current%amp
             DO i = 0,nx
               base = t_env * current%profile(i) &
