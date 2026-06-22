@@ -58,6 +58,13 @@ CONTAINS
     working_laser%use_profile_function = .TRUE.
     working_laser%use_omega_function = .FALSE.
 
+    ! Explicitly initialise custom-profile flags and filename for each new
+    ! laser block. Blank profile_data_file triggers the default filename
+    ! ('spatial_profile.dat') at load time.
+    working_laser%use_custom_profile = .FALSE.
+    working_laser%use_spatiotemporal = .FALSE.
+    working_laser%profile_data_file = ' '
+
   END SUBROUTINE laser_block_start
 
 
@@ -248,6 +255,26 @@ CONTAINS
 
     IF (str_cmp(element, 'id')) THEN
       working_laser%id = as_integer_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Custom laser profile keywords (same interface as epoch2d).
+    IF (str_cmp(element, 'use_custom_profile')) THEN
+      working_laser%use_custom_profile = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'use_spatiotemporal_profile')) THEN
+      working_laser%use_spatiotemporal = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Parse the custom profile data filename. The value can be:
+    !   - A plain filename (e.g. 'beam_2d.dat'), resolved relative to data_dir
+    !   - An absolute path (e.g. '/home/user/profiles/beam_2d.dat'), used as-is
+    ! If omitted, the default filename is used for backward compatibility.
+    IF (str_cmp(element, 'profile_data_file')) THEN
+      working_laser%profile_data_file = TRIM(ADJUSTL(value))
       RETURN
     END IF
 

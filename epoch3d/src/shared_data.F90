@@ -842,6 +842,17 @@ MODULE shared_data
 
     LOGICAL :: use_time_function, use_phase_function, use_profile_function
     LOGICAL :: use_omega_function
+
+    ! Custom laser profile flags (mirroring epoch2d interface).
+    ! use_custom_profile: read spatial profile from a data file
+    ! use_spatiotemporal: if also TRUE, use a spatiotemporal profile (not yet
+    !   implemented in 3D — reserved for future use)
+    ! profile_data_file: filename or absolute path to the data file; blank
+    !   means use the default ('spatial_profile.dat')
+    LOGICAL :: use_custom_profile = .FALSE.
+    LOGICAL :: use_spatiotemporal = .FALSE.
+    CHARACTER(LEN=c_max_path_length) :: profile_data_file = ' '
+
     TYPE(primitive_stack) :: time_function, phase_function, profile_function
     TYPE(primitive_stack) :: omega_function
 
