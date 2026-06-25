@@ -822,7 +822,16 @@ MODULE shared_data
     ! 'temporal_spatial_profile.dat' (2D) or 'spatial_profile.dat' (1D).
     ! Relative paths are resolved from data_dir; absolute paths used as-is.
     CHARACTER(LEN=c_max_path_length) :: profile_data_file = ' '
-  !!!  
+
+    ! Add-on for reading the spatiotemporal phase profile from file (e.g. a
+    ! LASY-generated envelope phase). When use_phase_from_file is true, the
+    ! deck 'phase = ...' expression is ignored and laser%phase is interpolated
+    ! from phase_data_file at every time step (see custom_laser_phase).
+    LOGICAL :: use_phase_from_file = .FALSE.
+    ! Path to the phase data file. If blank, defaults to 'phase_profile.dat'.
+    ! Relative paths are resolved from data_dir; absolute paths used as-is.
+    CHARACTER(LEN=c_max_path_length) :: phase_data_file = ' '
+  !!!
 
     TYPE(primitive_stack) :: time_function, phase_function, profile_function
     TYPE(primitive_stack) :: omega_function

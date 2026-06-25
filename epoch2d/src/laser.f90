@@ -240,20 +240,40 @@ CONTAINS
     INTEGER :: i, err
     TYPE(parameter_pack) :: parameters
 
+    !!! ADD THIS DECLARATION for custom (file-based) laser phase
+    REAL(num) :: pos
+
     err = 0
     CALL populate_pack_from_laser(laser, parameters)
+
+    ! Mirrors laser_update_profile: if the phase comes from a file, interpolate
+    ! it from the phase data file (custom_laser_phase) at every grid point;
+    ! otherwise evaluate the deck 'phase = ...' expression as before. When
+    ! use_phase_from_file is set, any deck 'phase' expression is ignored.
     SELECT CASE(laser%boundary)
       CASE(c_bd_x_min, c_bd_x_max)
         DO i = 0,ny
-          parameters%pack_iy = i
-          laser%phase(i) = &
-              evaluate_with_parameters(laser%phase_function, parameters, err)
+          IF (laser%use_phase_from_file) THEN
+            ! Use y(i) (cell centre) to match the analytical evaluator and the
+            ! amplitude profile, which resolve the spatial coordinate at y(i).
+            pos = y(i)
+            laser%phase(i) = custom_laser_phase(laser, pos)
+          ELSE
+            parameters%pack_iy = i
+            laser%phase(i) = &
+                evaluate_with_parameters(laser%phase_function, parameters, err)
+          END IF
         END DO
       CASE(c_bd_y_min, c_bd_y_max)
         DO i = 0,nx
-          parameters%pack_ix = i
-          laser%phase(i) = &
-              evaluate_with_parameters(laser%phase_function, parameters, err)
+          IF (laser%use_phase_from_file) THEN
+            pos = x(i)
+            laser%phase(i) = custom_laser_phase(laser, pos)
+          ELSE
+            parameters%pack_ix = i
+            laser%phase(i) = &
+                evaluate_with_parameters(laser%phase_function, parameters, err)
+          END IF
         END DO
     END SELECT
 
@@ -427,7 +447,8 @@ CONTAINS
         IF (current%boundary == c_bd_x_min) THEN
           ! evaluate the temporal evolution of the laser
           IF (time >= current%t_start .AND. time <= current%t_end) THEN
-            IF (current%use_phase_function) CALL laser_update_phase(current)
+            IF (current%use_phase_function .OR. current%use_phase_from_file) &
+                CALL laser_update_phase(current)
             
             ! ---> TRIGGER FOR BOTH MATH STRINGS AND OUR 2D FILE <---
             !!! Here, the logic is: if we use the normal way to declare a laser profile AND we don't declare a t_profile, 
@@ -522,7 +543,8 @@ CONTAINS
         IF (current%boundary == c_bd_x_max) THEN
           ! evaluate the temporal evolution of the laser
           IF (time >= current%t_start .AND. time <= current%t_end) THEN
-            IF (current%use_phase_function) CALL laser_update_phase(current)
+            IF (current%use_phase_function .OR. current%use_phase_from_file) &
+                CALL laser_update_phase(current)
             IF (current%use_profile_function .OR. &
                 (current%use_custom_profile .AND. current%use_spatiotemporal)) &
                 CALL laser_update_profile(current)
@@ -600,7 +622,8 @@ CONTAINS
         IF (current%boundary == c_bd_y_min) THEN
           ! evaluate the temporal evolution of the laser
           IF (time >= current%t_start .AND. time <= current%t_end) THEN
-            IF (current%use_phase_function) CALL laser_update_phase(current)
+            IF (current%use_phase_function .OR. current%use_phase_from_file) &
+                CALL laser_update_phase(current)
             IF (current%use_profile_function .OR. &
                 (current%use_custom_profile .AND. current%use_spatiotemporal)) &
                 CALL laser_update_profile(current)
@@ -678,7 +701,8 @@ CONTAINS
         IF (current%boundary == c_bd_y_max) THEN
           ! evaluate the temporal evolution of the laser
           IF (time >= current%t_start .AND. time <= current%t_end) THEN
-            IF (current%use_phase_function) CALL laser_update_phase(current)
+            IF (current%use_phase_function .OR. current%use_phase_from_file) &
+                CALL laser_update_phase(current)
             IF (current%use_profile_function .OR. &
                 (current%use_custom_profile .AND. current%use_spatiotemporal)) &
                 CALL laser_update_profile(current)

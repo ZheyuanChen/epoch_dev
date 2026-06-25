@@ -65,6 +65,11 @@ CONTAINS
     working_laser%use_spatiotemporal = .TRUE.
     working_laser%profile_data_file = ' '
 
+    ! Phase-from-file defaults: disabled, with a blank filename that triggers
+    ! the default 'phase_profile.dat' at load time.
+    working_laser%use_phase_from_file = .FALSE.
+    working_laser%phase_data_file = ' '
+
   END SUBROUTINE laser_block_start
 
 
@@ -283,6 +288,23 @@ CONTAINS
     ! If omitted, the default filenames are used for backward compatibility.
     IF (str_cmp(element, 'profile_data_file')) THEN
       working_laser%profile_data_file = TRIM(ADJUSTL(value))
+      RETURN
+    END IF
+
+    ! Enable reading the spatiotemporal phase from file. When true, EPOCH
+    ! ignores any 'phase = ...' deck expression and instead interpolates the
+    ! phase from phase_data_file at every time step (handled in
+    ! laser_update_phase / custom_laser_phase).
+    IF (str_cmp(element, 'use_phase_from_file')) THEN
+      working_laser%use_phase_from_file = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Parse the phase data filename (same resolution rules as profile_data_file:
+    ! plain filenames resolve relative to data_dir, absolute paths used as-is).
+    ! If omitted, the default 'phase_profile.dat' is used.
+    IF (str_cmp(element, 'phase_data_file')) THEN
+      working_laser%phase_data_file = TRIM(ADJUSTL(value))
       RETURN
     END IF
     !!!
