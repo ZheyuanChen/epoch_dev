@@ -59,8 +59,31 @@ CONTAINS
     ! Arrays to hold the raw file data
     REAL(num), ALLOCATABLE, DIMENSION(:) :: file_coords, file_values
 
-    ! Only proceed for the 1D spatial custom path (not 2D spatiotemporal)
-    IF (.NOT. laser%use_custom_profile .OR. laser%use_spatiotemporal) RETURN
+    IF (.NOT. laser%use_custom_profile) RETURN
+
+    ! 2D spatiotemporal path: pre-load amplitude (and optionally phase) profiles
+    ! here so that the MPI_BCAST calls happen during setup when ALL ranks
+    ! participate, avoiding the deadlock that occurs if loading is deferred to
+    ! the per-boundary-cell timestepping loop.
+    IF (laser%use_spatiotemporal) THEN
+      IF (LEN_TRIM(laser%profile_data_file) > 0) THEN
+        filename = laser%profile_data_file
+      ELSE
+        filename = 'temporal_spatial_profile.dat'
+      END IF
+      CALL load_temporal_spatial_profile(filename)
+
+      IF (laser%use_phase_from_file) THEN
+        IF (LEN_TRIM(laser%phase_data_file) > 0) THEN
+          filename = laser%phase_data_file
+        ELSE
+          filename = 'phase_profile.dat'
+        END IF
+        CALL load_phase_profile(filename)
+      END IF
+
+      RETURN
+    END IF
 
     ! Resolve the profile data filename:
     !   - If the user specified profile_data_file in the deck, use it
