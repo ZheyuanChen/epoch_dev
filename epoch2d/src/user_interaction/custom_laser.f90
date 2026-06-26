@@ -21,6 +21,8 @@ MODULE custom_laser
   ! A global switch to toggle between the 1D spatial loader and  2D spatiotemporal matrix without rewriting code
   !LOGICAL, SAVE :: use_2d_spatiotemporal = .TRUE.
 
+  INTEGER, PARAMETER :: custom_laser_lu = 150
+
 ! Persistent storage arrays for the 2D spatiotemporal profile
   INTEGER, SAVE :: n_y_points = 0
   INTEGER, SAVE :: n_t_points = 0
@@ -98,7 +100,7 @@ CONTAINS
     ELSE
       filename = TRIM(data_dir) // '/' // 'spatial_profile.dat'
     END IF
-    file_unit = 99 ! Explicit assignment to satisfy strict -std=f2003 standard
+    file_unit = custom_laser_lu
     
     ! --- 1. RANK 0 READS THE FILE ---
     IF (rank == 0) THEN
@@ -256,14 +258,14 @@ CONTAINS
 
     ! --- 1. RANK 0 READS DIMENSIONS ---
     IF (rank == 0) THEN
-        OPEN(UNIT=100, FILE=TRIM(full_filename), STATUS='OLD', &
+        OPEN(UNIT=custom_laser_lu, FILE=TRIM(full_filename), STATUS='OLD', &
              ACTION='READ', IOSTAT=io_err)
         IF (io_err /= 0) THEN
             PRINT *, "ERROR: Could not open ", TRIM(full_filename)
             CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
         END IF
 
-        READ(100, *) n_t_file, n_y_file
+        READ(custom_laser_lu, *) n_t_file, n_y_file
     END IF
 
     ! --- 2. BROADCAST DIMENSIONS SO ALL RANKS CAN ALLOCATE ---
@@ -271,16 +273,16 @@ CONTAINS
     CALL MPI_BCAST(n_y_file, 1, MPI_INTEGER, 0, mpi_comm_world, mpi_err)
 
     ! --- 3. ESTABLISH/VALIDATE THE SHARED GRID, THEN ALLOCATE THE MATRIX ---
-    CALL ensure_shared_grid(100, n_y_file, n_t_file)
+    CALL ensure_shared_grid(custom_laser_lu, n_y_file, n_t_file)
     ALLOCATE(file_field_matrix(n_y_points, n_t_points))
 
     ! --- 4. RANK 0 READS THE DATA MATRIX ---
     IF (rank == 0) THEN
         DO j = 1, n_t_points
-            READ(100, *) file_field_matrix(:, j)
+            READ(custom_laser_lu, *) file_field_matrix(:, j)
         END DO
 
-        CLOSE(100)
+        CLOSE(custom_laser_lu)
     END IF
 
     ! --- 5. BROADCAST DATA TO ALL RANKS ---
@@ -319,14 +321,14 @@ CONTAINS
 
     ! --- 1. RANK 0 READS DIMENSIONS ---
     IF (rank == 0) THEN
-        OPEN(UNIT=101, FILE=TRIM(full_filename), STATUS='OLD', &
+        OPEN(UNIT=custom_laser_lu, FILE=TRIM(full_filename), STATUS='OLD', &
              ACTION='READ', IOSTAT=io_err)
         IF (io_err /= 0) THEN
             PRINT *, "ERROR: Could not open ", TRIM(full_filename)
             CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
         END IF
 
-        READ(101, *) n_t_file, n_y_file
+        READ(custom_laser_lu, *) n_t_file, n_y_file
     END IF
 
     ! --- 2. BROADCAST DIMENSIONS SO ALL RANKS CAN ALLOCATE ---
@@ -334,16 +336,16 @@ CONTAINS
     CALL MPI_BCAST(n_y_file, 1, MPI_INTEGER, 0, mpi_comm_world, mpi_err)
 
     ! --- 3. ESTABLISH/VALIDATE THE SHARED GRID, THEN ALLOCATE THE MATRIX ---
-    CALL ensure_shared_grid(101, n_y_file, n_t_file)
+    CALL ensure_shared_grid(custom_laser_lu, n_y_file, n_t_file)
     ALLOCATE(file_phase_matrix(n_y_points, n_t_points))
 
     ! --- 4. RANK 0 READS THE DATA MATRIX ---
     IF (rank == 0) THEN
         DO j = 1, n_t_points
-            READ(101, *) file_phase_matrix(:, j)
+            READ(custom_laser_lu, *) file_phase_matrix(:, j)
         END DO
 
-        CLOSE(101)
+        CLOSE(custom_laser_lu)
     END IF
 
     ! --- 5. BROADCAST DATA TO ALL RANKS ---

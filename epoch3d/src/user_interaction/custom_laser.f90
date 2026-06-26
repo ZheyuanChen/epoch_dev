@@ -19,6 +19,8 @@ MODULE custom_laser
 
   IMPLICIT NONE
 
+  INTEGER, PARAMETER :: custom_laser_lu = 150
+
 CONTAINS
 
   FUNCTION custom_laser_time_profile(laser)
@@ -69,7 +71,7 @@ CONTAINS
       filename = TRIM(data_dir) // '/' // 'spatial_profile.dat'
     END IF
 
-    file_unit = 99
+    file_unit = custom_laser_lu
 
     ! --- 1. RANK 0 READS THE FILE ---
     IF (rank == 0) THEN
