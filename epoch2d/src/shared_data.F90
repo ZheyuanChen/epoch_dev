@@ -815,7 +815,8 @@ MODULE shared_data
     LOGICAL :: use_omega_function
 
   !!! Add-on for custom laser profiles and spatiotemporal profiles.
-    ! These two logical fields will be set in the laser block in input.deck. See src/deck/deck_laser_block.f90 for details.
+    ! These two logical fields will be set in the laser block in input.deck. See
+    ! src/deck/deck_laser_block.f90 for details.
     LOGICAL :: use_custom_profile = .FALSE.
     LOGICAL :: use_spatiotemporal = .TRUE.
     ! Path to the custom profile data file. If blank, defaults to

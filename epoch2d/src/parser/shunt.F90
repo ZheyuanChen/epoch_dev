@@ -190,9 +190,12 @@ CONTAINS
   END SUBROUTINE initialise_stack
 
 
-  ! This function is used to deallocate the stack and reset the stack point and size to zero. It also sets the init flag to false.
-  !A primitive_stack (defined at shared_data.F90:54-60) is a small object that holds a parsed, tokenized mathematical expression — 
-    !  essentially a compiled reverse-Polish-notation (RPN) instruction tree that the parser can evaluate at runtime
+  ! This function is used to deallocate the stack and reset the stack point and
+  ! size to zero. It also sets the init flag to false.
+  ! A primitive_stack (defined at shared_data.F90:54-60) is a small object that
+  ! holds a parsed, tokenized mathematical expression —
+    !  essentially a compiled reverse-Polish-notation (RPN) instruction tree
+    !  that the parser can evaluate at runtime
   SUBROUTINE deallocate_stack(stack)
 
     TYPE(primitive_stack), INTENT(INOUT) :: stack

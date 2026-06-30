@@ -18,7 +18,8 @@ MODULE custom_laser
   USE shared_data
   IMPLICIT NONE
 
-  ! A global switch to toggle between the 1D spatial loader and  2D spatiotemporal matrix without rewriting code
+  ! A global switch to toggle between the 1D spatial loader and  2D
+  ! spatiotemporal matrix without rewriting code
   !LOGICAL, SAVE :: use_2d_spatiotemporal = .TRUE.
 
   INTEGER, PARAMETER :: custom_laser_lu = 150
@@ -40,19 +41,24 @@ MODULE custom_laser
 
 CONTAINS
 
-  ! For now, we return a constant value for the time profile, but this could be extended to read from a file or compute a more complex function of time.
+  ! For now, we return a constant value for the time profile, but this could be
+  ! extended to read from a file or compute a more complex function of time.
   FUNCTION custom_laser_time_profile(laser)
     TYPE(laser_block), INTENT(IN) :: laser
     REAL(num) :: custom_laser_time_profile
     custom_laser_time_profile = 1.0_num
   END FUNCTION custom_laser_time_profile
 
-  ! This subroutine reads a spatial profile from a file and interpolates it onto the local grid of each MPI rank. The file is expected to have a simple format:
-    ! the first line contains the number of points, followed by lines of coordinate-value pairs.
-    ! The profile file must be named 'spatial_profile.dat' and located in the directory specified by 'USE_DATA_DIRECTORY'.
+  ! This subroutine reads a spatial profile from a file and interpolates it onto
+  ! the local grid of each MPI rank. The file is expected to have a simple
+  ! format:
+    ! the first line contains the number of points, followed by lines of
+    ! coordinate-value pairs.
+    ! The profile file must be named 'spatial_profile.dat' and located in the
+    ! directory specified by 'USE_DATA_DIRECTORY'.
   SUBROUTINE custom_laser_spatial_setup(laser)
     TYPE(laser_block), INTENT(INOUT) :: laser
-    
+
     CHARACTER(LEN=c_max_path_length) :: filename
     INTEGER :: file_unit, i, n_points, err
     REAL(num) :: pos, weight
@@ -101,45 +107,50 @@ CONTAINS
       filename = TRIM(data_dir) // '/' // 'spatial_profile.dat'
     END IF
     file_unit = custom_laser_lu
-    
+
     ! --- 1. RANK 0 READS THE FILE ---
     IF (rank == 0) THEN
-      OPEN(UNIT=file_unit, FILE=TRIM(filename), STATUS='OLD', ACTION='READ', IOSTAT=err)
+      OPEN(UNIT=file_unit, FILE=TRIM(filename), STATUS='OLD', ACTION='READ', &
+          IOSTAT=err)
       IF (err /= 0) THEN
         PRINT*, 'ERROR: Could not open laser profile file: ', TRIM(filename)
         CALL MPI_ABORT(mpi_comm_world, 1, err)
       END IF
-      
+
       ! Read the number of points specified at the top of your data file
       READ(file_unit, *) n_points
       ALLOCATE(file_coords(n_points), file_values(n_points))
-      
+
       ! Read coordinate-value pairs
-        ! By the end of this loop, file_coords will hold the coordinates (e.g., Y or X positions) and file_values will hold the corresponding laser profile values at those coordinates.
+        ! By the end of this loop, file_coords will hold the coordinates (e.g.,
+        ! Y or X positions) and file_values will hold the corresponding laser
+        ! profile values at those coordinates.
       DO i = 1, n_points
         READ(file_unit, *) file_coords(i), file_values(i)
       END DO
       CLOSE(file_unit)
     END IF
-    
+
     ! --- 2. BROADCAST DATA TO ALL MPI RANKS ---
     CALL MPI_BCAST(n_points, 1, MPI_INTEGER, 0, mpi_comm_world, err)
-    
+
     IF (rank /= 0) ALLOCATE(file_coords(n_points), file_values(n_points))
-    
-    CALL MPI_BCAST(file_coords, n_points, MPI_DOUBLE_PRECISION, 0, mpi_comm_world, err)
-    CALL MPI_BCAST(file_values, n_points, MPI_DOUBLE_PRECISION, 0, mpi_comm_world, err)
+
+    CALL MPI_BCAST(file_coords, n_points, MPI_DOUBLE_PRECISION, 0, &
+        mpi_comm_world, err)
+    CALL MPI_BCAST(file_values, n_points, MPI_DOUBLE_PRECISION, 0, &
+        mpi_comm_world, err)
 
     ! --- 3. INTERPOLATE ONTO THE LOCAL PROCESSOR GRID ---
     SELECT CASE(laser%boundary)
-      
+
       CASE(c_bd_x_min, c_bd_x_max)
         ! Laser is on a vertical boundary, varying along the Y-axis
         DO i = 0, ny
           ! Use cell-centre coordinate y(i), consistent with the analytical
           ! evaluator which resolves 'y' at y(pack_iy).
           pos = y(i)
-          
+
           ! Perform a simple linear search & interpolation from file data
           IF (pos <= file_coords(1)) THEN
             laser%profile(i) = file_values(1)
@@ -147,13 +158,16 @@ CONTAINS
             laser%profile(i) = file_values(n_points)
           ELSE
             DO idx_low = 1, n_points - 1
-              IF (pos >= file_coords(idx_low) .AND. pos <= file_coords(idx_low+1)) THEN
+              IF (pos >= file_coords(idx_low) &
+                  .AND. pos <= file_coords(idx_low+1)) THEN
                 idx_high = idx_low + 1
                 EXIT
               END IF
             END DO
-            weight = (pos - file_coords(idx_low)) / (file_coords(idx_high) - file_coords(idx_low))
-            laser%profile(i) = file_values(idx_low) + weight * (file_values(idx_high) - file_values(idx_low))
+            weight = (pos - file_coords(idx_low)) &
+                / (file_coords(idx_high) - file_coords(idx_low))
+            laser%profile(i) = file_values(idx_low) &
+                + weight * (file_values(idx_high) - file_values(idx_low))
           END IF
         END DO
 
@@ -161,7 +175,7 @@ CONTAINS
         ! Laser is on a horizontal boundary, varying along the X-axis
         DO i = 0, nx
           pos = x(i)
-          
+
           ! Perform a simple linear search & interpolation from file data
           IF (pos <= file_coords(1)) THEN
             laser%profile(i) = file_values(1)
@@ -169,13 +183,16 @@ CONTAINS
             laser%profile(i) = file_values(n_points)
           ELSE
             DO idx_low = 1, n_points - 1
-              IF (pos >= file_coords(idx_low) .AND. pos <= file_coords(idx_low+1)) THEN
+              IF (pos >= file_coords(idx_low) &
+                  .AND. pos <= file_coords(idx_low+1)) THEN
                 idx_high = idx_low + 1
                 EXIT
               END IF
             END DO
-            weight = (pos - file_coords(idx_low)) / (file_coords(idx_high) - file_coords(idx_low))
-            laser%profile(i) = file_values(idx_low) + weight * (file_values(idx_high) - file_values(idx_low))
+            weight = (pos - file_coords(idx_low)) &
+                / (file_coords(idx_high) - file_coords(idx_low))
+            laser%profile(i) = file_values(idx_low) &
+                + weight * (file_values(idx_high) - file_values(idx_low))
           END IF
         END DO
 
@@ -293,7 +310,8 @@ CONTAINS
 
     IF (rank == 0) THEN
         PRINT *, ">>> Custom 2D Spatiotemporal Profile Loaded Successfully! <<<"
-        PRINT *, "    Grid Size: ", n_y_points, " (Spatial) x ", n_t_points, " (Temporal)"
+        PRINT *, "    Grid Size: ", n_y_points, " (Spatial) x ", &
+            n_t_points, " (Temporal)"
     END IF
 
   END SUBROUTINE load_temporal_spatial_profile
@@ -355,8 +373,10 @@ CONTAINS
     phase_loaded = .TRUE.
 
     IF (rank == 0) THEN
-        PRINT *, ">>> Custom 2D Spatiotemporal Phase Profile Loaded Successfully! <<<"
-        PRINT *, "    Grid Size: ", n_y_points, " (Spatial) x ", n_t_points, " (Temporal)"
+        PRINT *, ">>> Custom 2D Spatiotemporal Phase Profile Loaded " // &
+            "Successfully! <<<"
+        PRINT *, "    Grid Size: ", n_y_points, " (Spatial) x ", &
+            n_t_points, " (Temporal)"
     END IF
 
   END SUBROUTINE load_phase_profile
@@ -385,18 +405,22 @@ CONTAINS
     ! --- 1. Boundary & Guard Checks ---
     ! Spatial check (pos = current y coordinate on grid)
     IF (pos < file_y_coords(1) .OR. pos > file_y_coords(n_y_points)) RETURN
-    
+
     ! Temporal check (time = current global simulation time from shared_data)
     IF (time < file_t_coords(1) .OR. time > file_t_coords(n_t_points)) RETURN
 
 
     ! --- 2. Locate the Bounding Cell Box ---
     ! Find lower index spatial bounding point
-    
-    ! The commented code should apply for an arbitraryly spaced laser profile grid. However, this is an O(n) search and is not efficient for large grids. 
-    ! Instead, we can use a direct index calculation for uniform grids, which is O(1). The Python script guarantees uniform spacing using np.linspace. 
-    
-    !!!!!! Must ensure that the laser profile file is generated with uniform spacing for this optimization to be valid. !!!!!!
+
+    ! The commented code should apply for an arbitraryly spaced laser profile
+    ! grid. However, this is an O(n) search and is not efficient for large
+    ! grids.
+    ! Instead, we can use a direct index calculation for uniform grids, which is
+    ! O(1). The Python script guarantees uniform spacing using np.linspace.
+
+    !!!!!! Must ensure that the laser profile file is generated with uniform
+    !!!!!! spacing for this optimization to be valid. !!!!!!
 
     !idx_y = 1
     !DO WHILE (file_y_coords(idx_y+1) < pos .AND. idx_y < n_y_points - 1)
@@ -409,9 +433,13 @@ CONTAINS
     !   idx_t = idx_t + 1
     !END DO
 
-    ! Direct index calculation (O(1)) — valid only for uniform grids. This is likely to be visited again if we decide to support non-uniform grids in the future.
-    idx_y = INT((pos  - file_y_coords(1)) / (file_y_coords(2) - file_y_coords(1))) + 1
-    idx_t = INT((time - file_t_coords(1)) / (file_t_coords(2) - file_t_coords(1))) + 1
+    ! Direct index calculation (O(1)) — valid only for uniform grids. This is
+    ! likely to be visited again if we decide to support non-uniform grids in
+    ! the future.
+    idx_y = INT((pos  - file_y_coords(1)) &
+        / (file_y_coords(2) - file_y_coords(1))) + 1
+    idx_t = INT((time - file_t_coords(1)) &
+        / (file_t_coords(2) - file_t_coords(1))) + 1
 
     ! Clamp to valid interpolation range [1, n-1]
     idx_y = MAX(1, MIN(idx_y, n_y_points - 1))
@@ -419,8 +447,10 @@ CONTAINS
 
     ! --- 3. Bilinear Interpolation Math ---
     ! Compute normalised fractional positions within the grid cell
-    u = (pos - file_y_coords(idx_y)) / (file_y_coords(idx_y+1) - file_y_coords(idx_y))
-    v = (time - file_t_coords(idx_t)) / (file_t_coords(idx_t+1) - file_t_coords(idx_t))
+    u = (pos - file_y_coords(idx_y)) &
+        / (file_y_coords(idx_y+1) - file_y_coords(idx_y))
+    v = (time - file_t_coords(idx_t)) &
+        / (file_t_coords(idx_t+1) - file_t_coords(idx_t))
 
     ! Grab the 4 surrounding pixel values from the data matrix
     q11 = file_field_matrix(idx_y,     idx_t)      ! Bottom-Left
@@ -473,8 +503,10 @@ CONTAINS
     ! --- 2. Locate the Bounding Cell Box ---
     ! Direct index calculation (O(1)) — valid only for uniform grids, which the
     ! Python generator guarantees via np.linspace (same grid as the amplitude).
-    idx_y = INT((pos  - file_y_coords(1)) / (file_y_coords(2) - file_y_coords(1))) + 1
-    idx_t = INT((time - file_t_coords(1)) / (file_t_coords(2) - file_t_coords(1))) + 1
+    idx_y = INT((pos  - file_y_coords(1)) &
+        / (file_y_coords(2) - file_y_coords(1))) + 1
+    idx_t = INT((time - file_t_coords(1)) &
+        / (file_t_coords(2) - file_t_coords(1))) + 1
 
     ! Clamp to valid interpolation range [1, n-1]
     idx_y = MAX(1, MIN(idx_y, n_y_points - 1))
@@ -482,8 +514,10 @@ CONTAINS
 
     ! --- 3. Bilinear Interpolation Math ---
     ! Compute normalised fractional positions within the grid cell
-    u = (pos - file_y_coords(idx_y)) / (file_y_coords(idx_y+1) - file_y_coords(idx_y))
-    v = (time - file_t_coords(idx_t)) / (file_t_coords(idx_t+1) - file_t_coords(idx_t))
+    u = (pos - file_y_coords(idx_y)) &
+        / (file_y_coords(idx_y+1) - file_y_coords(idx_y))
+    v = (time - file_t_coords(idx_t)) &
+        / (file_t_coords(idx_t+1) - file_t_coords(idx_t))
 
     ! Grab the 4 surrounding pixel values from the phase matrix
     q11 = file_phase_matrix(idx_y,     idx_t)      ! Bottom-Left

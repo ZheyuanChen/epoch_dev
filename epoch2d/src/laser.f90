@@ -18,42 +18,57 @@
 
 !!!!! The Big Picture: How laser.f90 is Organised
 
-!!! The laser module acts as an object-oriented class (within Fortran limits) for managing lasers. 
-! It uses a custom derived data type called laser_block (defined elsewhere, likely in a core data module) 
-! which acts like a struct containing all the properties of a single laser (amplitude, frequency, temporal profile,
+!!! The laser module acts as an object-oriented class (within Fortran limits)
+!!! for managing lasers.
+! It uses a custom derived data type called laser_block (defined elsewhere,
+! likely in a core data module)
+! which acts like a struct containing all the properties of a single laser
+! (amplitude, frequency, temporal profile,
 ! spatial profile). The subroutines in this file fall into four main categories:
 
 !!!A. Initialisation and Memory Management
 
-! init_laser: Sets up a new laser_block with safe default values (e.g., -1.0_num) 
+! init_laser: Sets up a new laser_block with safe default values (e.g.,
+! -1.0_num)
 ! and allocates the spatial profile and phase arrays.
 
 ! deallocate_laser(s): Cleans up memory when the simulation ends.
 
-! attach_laser: EPOCH allows multiple lasers on the same boundary. 
-! This routine links a newly created laser into a "linked list" for a specific boundary, 
+! attach_laser: EPOCH allows multiple lasers on the same boundary.
+! This routine links a newly created laser into a "linked list" for a specific
+! boundary,
 ! allowing the code to loop through all active lasers later.
 
-! allocate_with_boundary: Allocates the arrays for spatial profiles. Notice the 1-ng : ny+ng syntax. 
-! ng stands for "number of ghost cells". EPOCH needs these arrays to cover not just the physical domain, but the overlapping parallel boundary cells too.
+! allocate_with_boundary: Allocates the arrays for spatial profiles. Notice the
+! 1-ng : ny+ng syntax.
+! ng stands for "number of ghost cells". EPOCH needs these arrays to cover not
+! just the physical domain, but the overlapping parallel boundary cells too.
 
 !!! B. The Math Evaluators
 
-! populate_pack_from_laser & laser_update_{phase, profile, omega}: EPOCH has a built-in mathematical parser. 
-! When you write profile = gauss(y, 0, 10e-6) in your input.deck, these routines translate that text 
-! into numerical values across the grid at every time step using evaluate_with_parameters.
+! populate_pack_from_laser & laser_update_{phase, profile, omega}: EPOCH has a
+! built-in mathematical parser.
+! When you write profile = gauss(y, 0, 10e-6) in your input.deck, these routines
+! translate that text
+! into numerical values across the grid at every time step using
+! evaluate_with_parameters.
 
-! laser_time_profile: Calculates the temporal envelope (the time-varying amplitude of the laser pulse) 
+! laser_time_profile: Calculates the temporal envelope (the time-varying
+! amplitude of the laser pulse)
 ! at the current simulation time.
 
 !!! C. Diagnostics
-! calc_absorption: Computes the Poynting flux (electromagnetic energy transfer) across the boundaries 
-! to track how much laser energy was injected and how much scattered light left the domain.
+! calc_absorption: Computes the Poynting flux (electromagnetic energy transfer)
+! across the boundaries
+! to track how much laser energy was injected and how much scattered light left
+! the domain.
 
 !!! D. The Core Physics (The Boundary Conditions)
 
-! outflow_bcs_x_min, outflow_bcs_x_max, outflow_bcs_y_min, outflow_bcs_y_max: These are the most critical 
-! subroutines for your project. They perform the actual physics of injecting the laser wave into the simulation box.
+! outflow_bcs_x_min, outflow_bcs_x_max, outflow_bcs_y_min, outflow_bcs_y_max:
+! These are the most critical
+! subroutines for your project. They perform the actual physics of injecting the
+! laser wave into the simulation box.
 
 
 
@@ -114,7 +129,8 @@ CONTAINS
   END SUBROUTINE setup_laser_phases
 
 
-! Deallocate all memory at the end of the simulation for a single laser, and for the linked list of lasers on each boundary.
+! Deallocate all memory at the end of the simulation for a single laser, and for
+! the linked list of lasers on each boundary.
   SUBROUTINE deallocate_laser(laser)
 
     TYPE(laser_block), POINTER :: laser
@@ -134,7 +150,9 @@ CONTAINS
   END SUBROUTINE deallocate_laser
 
 
-! Deallocate the linked list of lasers on each boundary at the end of the simulation. This loops through the linked list and calls deallocate_laser for each one.
+! Deallocate the linked list of lasers on each boundary at the end of the
+! simulation. This loops through the linked list and calls deallocate_laser for
+! each one.
   SUBROUTINE deallocate_lasers
 
     TYPE(laser_block), POINTER :: current, next
@@ -202,9 +220,15 @@ CONTAINS
 
 
   ! There is a potential issue of overwriting the time_profile.
-  ! If, in addition to using a temporal_spatial customised profile, one also specifies a t_profile in the laser block, then the overall laser profile will 
-  ! be the product of the two. This is not necessarily a problem, but it is something to be aware of. The logic here is that if a t_profile is specified, it will be used, otherwise the custom profile will be used.
-  ! Therefore, if one wants to use a custom temporal profile, one should not specify a t_profile in the laser block. This is something that could be improved in future versions of EPOCH.
+  ! If, in addition to using a temporal_spatial customised profile, one also
+  ! specifies a t_profile in the laser block, then the overall laser profile
+  ! will
+  ! be the product of the two. This is not necessarily a problem, but it is
+  ! something to be aware of. The logic here is that if a t_profile is
+  ! specified, it will be used, otherwise the custom profile will be used.
+  ! Therefore, if one wants to use a custom temporal profile, one should not
+  ! specify a t_profile in the laser block. This is something that could be
+  ! improved in future versions of EPOCH.
   FUNCTION laser_time_profile(laser)
 
     TYPE(laser_block), POINTER :: laser
@@ -214,13 +238,17 @@ CONTAINS
 
     err = 0
     CALL populate_pack_from_laser(laser, parameters)
-    IF (laser%use_time_function) THEN ! use_time_function is set to TRUE if there is a line specifying t_profile=... in laser block
+    ! use_time_function is set to TRUE if there is a line specifying
+    ! t_profile=... in laser block
+    IF (laser%use_time_function) THEN
       laser_time_profile = evaluate_with_parameters(laser%time_function, &
           parameters, err)
       RETURN
     END IF
 
-    laser_time_profile = custom_laser_time_profile(laser) ! There might be an overwriting issue about time_profile. Need to recheck the logic.
+    ! There might be an overwriting issue about time_profile. Need to
+    ! recheck the logic.
+    laser_time_profile = custom_laser_time_profile(laser)
 
   END FUNCTION laser_time_profile
 
@@ -277,27 +305,42 @@ CONTAINS
     TYPE(laser_block), POINTER :: laser
     INTEGER :: i, err
     TYPE(parameter_pack) :: parameters
-    
+
     !!!  ADD THIS DECLARATION for custom laser profile
     REAL(num) :: pos
 
     err = 0
     CALL populate_pack_from_laser(laser, parameters)
     SELECT CASE(laser%boundary)
-      !!! Changed the logic here to allow for custom laser profiles. If a custom profile is specified, it will be used instead of the profile_function. This allows for more flexibility in defining the spatial profile of the laser.
-      
-      ! Note that use_profile_function is set to be FALSE in default (in laser.f90).
-      ! it is set to TRUE in deck_laser_block.f90 if the profile is time-varying.
+      !!! Changed the logic here to allow for custom laser profiles. If a custom
+      !!! profile is specified, it will be used instead of the profile_function.
+      !!! This allows for more flexibility in defining the spatial profile of
+      !!! the laser.
 
-      ! So, here the logic is: 
-      ! If we use an analytical time-independent profile, then use_profile_function is set to FALSE and we do not need to update the profile at every time step (it is set at the start of the simulation)
-      ! If we use an analytical time-varying profile, then use_profile_function is set to TRUE and we call evaluate_with_parameters to update the profile at every time step
-      ! If we use a custom spatiotemporal profile, then use_custom_profile and use_spatiotemporal are both set to TRUE and we call custom_laser_profile to update the profile at every time step
-      
-      ! If we use a custom spatial profile, then use_custom_profile is set to TRUE and use_spatiotemporal is set to FALSE, and we do not need to update the profile at every time step (it is set at the start of the simulation)
-      
+      ! Note that use_profile_function is set to be FALSE in default (in
+      ! laser.f90).
+      ! it is set to TRUE in deck_laser_block.f90 if the profile is
+      ! time-varying.
 
-      ! Fix proposed by Issue 1: rewrite the condition here, adding laser_profile_function%init and changing the sequence.
+      ! So, here the logic is:
+      ! If we use an analytical time-independent profile, then
+      ! use_profile_function is set to FALSE and we do not need to update the
+      ! profile at every time step (it is set at the start of the simulation)
+      ! If we use an analytical time-varying profile, then use_profile_function
+      ! is set to TRUE and we call evaluate_with_parameters to update the
+      ! profile at every time step
+      ! If we use a custom spatiotemporal profile, then use_custom_profile and
+      ! use_spatiotemporal are both set to TRUE and we call custom_laser_profile
+      ! to update the profile at every time step
+
+      ! If we use a custom spatial profile, then use_custom_profile is set to
+      ! TRUE and use_spatiotemporal is set to FALSE, and we do not need to
+      ! update the profile at every time step (it is set at the start of the
+      ! simulation)
+
+
+      ! Fix proposed by Issue 1: rewrite the condition here, adding
+      ! laser_profile_function%init and changing the sequence.
       CASE(c_bd_x_min, c_bd_x_max)
         DO i = 0,ny
           IF (laser%use_custom_profile .AND. laser%use_spatiotemporal) THEN
@@ -305,9 +348,11 @@ CONTAINS
             ! which resolves the deck variable 'y' at y(pack_iy).
             pos = y(i)
             laser%profile(i) = custom_laser_profile(laser, pos)
-          ELSE IF (laser%use_profile_function .OR. laser%profile_function%init) THEN
+          ELSE IF (laser%use_profile_function &
+              .OR. laser%profile_function%init) THEN
             parameters%pack_iy = i
-            laser%profile(i) = evaluate_with_parameters(laser%profile_function, parameters, err)
+            laser%profile(i) = evaluate_with_parameters( &
+                laser%profile_function, parameters, err)
           END IF
         END DO
 
@@ -316,13 +361,15 @@ CONTAINS
           IF (laser%use_custom_profile .AND. laser%use_spatiotemporal) THEN
             pos = x(i)
             laser%profile(i) = custom_laser_profile(laser, pos)
-          ELSE IF (laser%use_profile_function .OR. laser%profile_function%init) THEN
+          ELSE IF (laser%use_profile_function &
+              .OR. laser%profile_function%init) THEN
             parameters%pack_ix = i
-            laser%profile(i) = evaluate_with_parameters(laser%profile_function, parameters, err)
+            laser%profile(i) = evaluate_with_parameters( &
+                laser%profile_function, parameters, err)
           END IF
         END DO
 
-      
+
     END SELECT
 
   END SUBROUTINE laser_update_profile
@@ -404,7 +451,9 @@ CONTAINS
   END SUBROUTINE set_laser_dt
 
 
-  ! In a normal running: outflow_bcs_x_min is part of the final B-boundary update once per main timestep, plus one startup call during initial field setup.
+  ! In a normal running: outflow_bcs_x_min is part of the final B-boundary
+  ! update once per main timestep, plus one startup call during initial field
+  ! setup.
   SUBROUTINE outflow_bcs_x_min
 
     REAL(num) :: t_env
@@ -441,16 +490,25 @@ CONTAINS
           IF (time >= current%t_start .AND. time <= current%t_end) THEN
             IF (current%use_phase_function .OR. current%use_phase_from_file) &
                 CALL laser_update_phase(current)
-            
+
             ! ---> TRIGGER FOR BOTH MATH STRINGS AND OUR 2D FILE <---
-            !!! Here, the logic is: if we use the normal way to declare a laser profile AND we don't declare a t_profile, 
-            !!! then the first condition is met (I think that if we use a time-independent laser profile, EPOCH initialises
-            !!! it at the start and then TURN use_profile_function to FALSE, in which case we don't need and it doesn't use update_laser_profile)
-            !!! If we use spatiotemporal profile (in which case both conditions in the second line are met), then we need to call laser_update_profile
-            !!! If we only use a spatial profile, then there is no need to call laser_update_profile as the profile is initiated at the start. 
-            
-            ! For reference, in laser_block_handle_element function in deck_laser_block.f90, we have the following:
-            ! One can see that only if the profile is time varying, then use_profile_function is declared TRUE.
+            !!! Here, the logic is: if we use the normal way to declare a laser
+            !!! profile AND we don't declare a t_profile,
+            !!! then the first condition is met (I think that if we use a
+            !!! time-independent laser profile, EPOCH initialises
+            !!! it at the start and then TURN use_profile_function to FALSE, in
+            !!! which case we don't need and it doesn't use
+            !!! update_laser_profile)
+            !!! If we use spatiotemporal profile (in which case both conditions
+            !!! in the second line are met), then we need to call
+            !!! laser_update_profile
+            !!! If we only use a spatial profile, then there is no need to call
+            !!! laser_update_profile as the profile is initiated at the start.
+
+            ! For reference, in laser_block_handle_element function in
+            ! deck_laser_block.f90, we have the following:
+            ! One can see that only if the profile is time varying, then
+            ! use_profile_function is declared TRUE.
             !IF (working_laser%profile_function%is_time_varying) THEN
             !working_laser%use_profile_function = .TRUE.
             !ELSE
@@ -461,7 +519,9 @@ CONTAINS
                 (current%use_custom_profile .AND. current%use_spatiotemporal)) &
                 CALL laser_update_profile(current)
 
-            t_env = laser_time_profile(current) * current%amp ! SO this line multiplies the profile set by t_profile and the profile set by either profile = ... or the customised dat file.
+            ! SO this line multiplies the profile set by t_profile and the
+            ! profile set by either profile = ... or the customised dat file.
+            t_env = laser_time_profile(current) * current%amp
             DO i = 0,ny
               base = t_env * current%profile(i) &
                 * SIN(current%current_integral_phase + current%phase(i))

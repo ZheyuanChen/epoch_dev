@@ -57,7 +57,7 @@ CONTAINS
     working_laser%use_phase_function = .TRUE.
     working_laser%use_profile_function = .TRUE.
     working_laser%use_omega_function = .FALSE.
-   
+
     ! Explicitly initialise custom-profile flags and filename for each new
     ! laser block. Blank profile_data_file triggers the default filename
     ! ('temporal_spatial_profile.dat' or 'spatial_profile.dat') at load time.
@@ -110,7 +110,8 @@ CONTAINS
       IF (boundary_set) RETURN
       boundary = as_boundary_print(value, element, errcode)
       boundary_set = .TRUE.
-      CALL init_laser(boundary, working_laser) ! At this point use_profile_function = FALSE
+      ! At this point use_profile_function = FALSE
+      CALL init_laser(boundary, working_laser)
       RETURN
     END IF
 
@@ -200,17 +201,30 @@ CONTAINS
     END IF
 
     ! Deallocate_stack is defined in src/parser/shunt.F90:194-210.
-    ! The primitive_stack  type is defined at shared_data.F90:54-60. 
+    ! The primitive_stack  type is defined at shared_data.F90:54-60.
     IF (str_cmp(element, 'profile')) THEN
-      CALL initialise_stack(working_laser%profile_function) ! allocates entries(:) and sets init = .TRUE..
-      CALL tokenize(value, working_laser%profile_function, errcode) ! tokenise: parses the expression (e.g. gauss(y,0,1e-6)) and turns a stack of tokens in entries(:) and sets is_time_varying = .TRUE. if the expression contains time.
-      working_laser%profile = 0.0_num ! sets the profile to 0.0_num (the default value) before evaluating the expression.
-      CALL laser_update_profile(working_laser) ! goes through every point, evaluates the expression in entries(:) and sets profile to the evaluated value.
-      
-      ! At this point, EPOCH wants to know if we should keep the token (i.e. the expression) in memory for later evaluation (if the expression is time-varying) or if we can deallocate it (if the expression is not time-varying).
+      ! allocates entries(:) and sets init = .TRUE..
+      CALL initialise_stack(working_laser%profile_function)
+      ! tokenise: parses the expression (e.g. gauss(y,0,1e-6)) and turns a
+      ! stack of tokens in entries(:) and sets is_time_varying = .TRUE. if the
+      ! expression contains time.
+      CALL tokenize(value, working_laser%profile_function, errcode)
+      ! sets the profile to 0.0_num (the default value) before evaluating the
+      ! expression.
+      working_laser%profile = 0.0_num
+      ! goes through every point, evaluates the expression in entries(:) and
+      ! sets profile to the evaluated value.
+      CALL laser_update_profile(working_laser)
+
+      ! At this point, EPOCH wants to know if we should keep the token (i.e. the
+      ! expression) in memory for later evaluation (if the expression is
+      ! time-varying) or if we can deallocate it (if the expression is not
+      ! time-varying).
 
       IF (working_laser%profile_function%is_time_varying) THEN
-        working_laser%use_profile_function = .TRUE. ! in which case we wnat to keep the expression and evaluate it at every time step.
+        ! in which case we wnat to keep the expression and evaluate it at
+        ! every time step.
+        working_laser%use_profile_function = .TRUE.
       ELSE
         CALL deallocate_stack(working_laser%profile_function)
       END IF
@@ -270,15 +284,19 @@ CONTAINS
     END IF
 
     !!! Add-on for custom laser profiles and spatiotemporal profiles.
-    ! Enable the input.deck to specify whether to use a custom profile or an analytical (the usual way) profile. 
-    ! These two logical fields will be set in the laser block in input.deck. See also src/shared_data.F90.
+    ! Enable the input.deck to specify whether to use a custom profile or an
+    ! analytical (the usual way) profile.
+    ! These two logical fields will be set in the laser block in input.deck. See
+    ! also src/shared_data.F90.
     IF (str_cmp(element, 'use_custom_profile')) THEN
-      working_laser%use_custom_profile = as_logical_print(value, element, errcode)
+      working_laser%use_custom_profile = as_logical_print(value, element, &
+          errcode)
       RETURN
     END IF
 
     IF (str_cmp(element, 'use_spatiotemporal_profile')) THEN
-      working_laser%use_spatiotemporal = as_logical_print(value, element, errcode)
+      working_laser%use_spatiotemporal = as_logical_print(value, element, &
+          errcode)
       RETURN
     END IF
 
@@ -296,7 +314,8 @@ CONTAINS
     ! phase from phase_data_file at every time step (handled in
     ! laser_update_phase / custom_laser_phase).
     IF (str_cmp(element, 'use_phase_from_file')) THEN
-      working_laser%use_phase_from_file = as_logical_print(value, element, errcode)
+      working_laser%use_phase_from_file = as_logical_print(value, &
+          element, errcode)
       RETURN
     END IF
 

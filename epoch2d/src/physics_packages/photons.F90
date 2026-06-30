@@ -32,8 +32,10 @@ CONTAINS
 
   !!!!! Block 1: The Setup
 
-  !!! Checking the Roster: setup_qed_module and check_qed_variables verify that you actually put electrons, 
-  ! positrons, and photons in your input.deck. If you ask for pairs but didn't define a species for them, 
+  !!! Checking the Roster: setup_qed_module and check_qed_variables verify that
+  !!! you actually put electrons,
+  ! positrons, and photons in your input.deck. If you ask for pairs but didn't
+  ! define a species for them,
   ! it throws a warning or an error.
   SUBROUTINE setup_qed_module
 
@@ -227,12 +229,17 @@ CONTAINS
   END FUNCTION check_qed_variables
 
 
-  !!! Loading the Cheatsheets: setup_tables_qed reads a bunch of .table files from the EPOCH directory 
-  ! (like hsokolov.table and pairprod.table). These files contain pre-computed emission probabilities 
-  ! and energy spectra based on different values of the quantum parameters $\eta$ (for electrons/positrons) and $\chi$ (for photons).
+  !!! Loading the Cheatsheets: setup_tables_qed reads a bunch of .table files
+  !!! from the EPOCH directory
+  ! (like hsokolov.table and pairprod.table). These files contain pre-computed
+  ! emission probabilities
+  ! and energy spectra based on different values of the quantum parameters
+  ! $\eta$ (for electrons/positrons) and $\chi$ (for photons).
 
-  !!! MPI Broadcasting: Because EPOCH runs in parallel (MPI), only rank 0 (the master core) reads the tables from the hard drive. 
-  ! It then packages that data into arrays and broadcasts it to all other cores so they all have the lookup tables in memory.
+  !!! MPI Broadcasting: Because EPOCH runs in parallel (MPI), only rank 0 (the
+  !!! master core) reads the tables from the hard drive.
+  ! It then packages that data into arrays and broadcasts it to all other cores
+  ! so they all have the lookup tables in memory.
   SUBROUTINE setup_tables_qed
 
     ! Reads files epsilon.table, log_chi.table, energy_split.table
@@ -508,10 +515,13 @@ CONTAINS
 
   !!!!! Block 2: The Optical Depth Engine
 
-  ! This is where the Monte Carlo magic happens. EPOCH uses an "Optical Depth" method to decide when a QED event occurs.
+  ! This is where the Monte Carlo magic happens. EPOCH uses an "Optical Depth"
+  ! method to decide when a QED event occurs.
 
-  !!! Assigning a Destiny: When a particle is created, it is assigned a random "optical depth" ($\tau$) 
-  ! between 0 and infinity using $\tau = -\ln(1 - R)$, where $R$ is a random number between 0 and 1.
+  !!! Assigning a Destiny: When a particle is created, it is assigned a random
+  !!! "optical depth" ($\tau$)
+  ! between 0 and infinity using $\tau = -\ln(1 - R)$, where $R$ is a random
+  ! number between 0 and 1.
   SUBROUTINE initialise_optical_depth(current_species)
 
     ! Resets optical depth (to random number) of all particles
@@ -547,12 +557,17 @@ CONTAINS
   END FUNCTION reset_optical_depth
 
 
-  !!! The Countdown Timer: Every timestep, in qed_update_optical_depth, EPOCH looks at every electron, positron, and photon.
-  ! It calculates the particle's quantum parameter ($\eta$ or $\chi$).It uses those parameters to look up 
-  ! the rate of emission/decay from the tables.It subtracts that rate $\times$ dt from the particle's optical depth.
+  !!! The Countdown Timer: Every timestep, in qed_update_optical_depth, EPOCH
+  !!! looks at every electron, positron, and photon.
+  ! It calculates the particle's quantum parameter ($\eta$ or $\chi$).It uses
+  ! those parameters to look up
+  ! the rate of emission/decay from the tables.It subtracts that rate $\times$
+  ! dt from the particle's optical depth.
 
-  !!! The Trigger: When a particle's optical depth drops below zero, the event happens! The electron emits a photon, 
-  ! or the photon splits into a pair. The optical depth is then reset with a new random number, and the countdown begins again.
+  !!! The Trigger: When a particle's optical depth drops below zero, the event
+  !!! happens! The electron emits a photon,
+  ! or the photon splits into a pair. The optical depth is then reset with a new
+  ! random number, and the countdown begins again.
   SUBROUTINE qed_update_optical_depth
 
     ! Updates the optical depth for electrons and photons
@@ -583,7 +598,8 @@ CONTAINS
           eta = calculate_eta(part_x, part_y, part_ux, part_uy, &
               part_uz, gamma_rel)
 
-          ! If using continuous emission emit a photon macroparticle at every timestep
+          ! If using continuous emission emit a photon macroparticle at every
+          ! timestep
           IF (use_continuous_emission) THEN
             CALL generate_photon(current, photon_species, eta)
           ELSE
@@ -699,10 +715,13 @@ CONTAINS
 
   !!!!! Block 3: The Quantum Parameters $\eta$ and $\chi$
 
-  !!! For electrons/positrons: eta. 
-  ! It calculates $\eta$, which is the ratio of the electric field experienced in the electron's rest frame 
-  ! to the Schwinger field ($E_S \approx 1.3 \times 10^{18} \text{ V/m}$, the field required to rip pairs from the vacuum).
-  ! It pulls the local $\mathbf{E}$ and $\mathbf{B}$ fields, does a Lorentz transformation using the particle's velocity, and spits out $\eta$.
+  !!! For electrons/positrons: eta.
+  ! It calculates $\eta$, which is the ratio of the electric field experienced
+  ! in the electron's rest frame
+  ! to the Schwinger field ($E_S \approx 1.3 \times 10^{18} \text{ V/m}$, the
+  ! field required to rip pairs from the vacuum).
+  ! It pulls the local $\mathbf{E}$ and $\mathbf{B}$ fields, does a Lorentz
+  ! transformation using the particle's velocity, and spits out $\eta$.
   FUNCTION calculate_eta(part_x, part_y, part_ux, part_uy, part_uz, &
       gamma_rel)
 
@@ -785,9 +804,12 @@ CONTAINS
   END FUNCTION calculate_chi
 
 
-  !!! To calculate eta and chi, we need to know the exact fields at the particle position.
-  ! This is a utility subroutine that interpolates the grid-based $\mathbf{E}$ and $\mathbf{B}$ 
-  ! fields to the exact sub-grid position of the particle using shape functions (like B-splines or tophats).
+  !!! To calculate eta and chi, we need to know the exact fields at the particle
+  !!! position.
+  ! This is a utility subroutine that interpolates the grid-based $\mathbf{E}$
+  ! and $\mathbf{B}$
+  ! fields to the exact sub-grid position of the particle using shape functions
+  ! (like B-splines or tophats).
   SUBROUTINE field_at_particle(part_x, part_y, e_at_part, b_at_part)
 
     REAL(num), INTENT(IN) :: part_x, part_y
@@ -915,15 +937,20 @@ CONTAINS
   ! When an electron's optical depth hits zero, generate_photon is called.
 
 
-  !!! Energy Sampling: It calls calculate_photon_energy, which rolls another random number and checks the  
-  ! lookup tables to determine exactly how much energy the new photon gets. (Higher $\eta$ means a higher 
+  !!! Energy Sampling: It calls calculate_photon_energy, which rolls another
+  !!! random number and checks the
+  ! lookup tables to determine exactly how much energy the new photon gets.
+  ! (Higher $\eta$ means a higher
   ! probability of spitting out a very energetic photon).
 
-  !!! Radiation Reaction: If radiation reaction is turned on, the code subtracts the new photon's energy
+  !!! Radiation Reaction: If radiation reaction is turned on, the code subtracts
+  !!! the new photon's energy
   ! from the parent electron's momentum. This is the recoil force!
 
-  !!! Birth: If the photon has enough energy (above photon_energy_min), a new macro-particle is born. 
-  ! It is placed at the exact position of the parent electron, moving in the exact same direction, and added to the photon_species list.
+  !!! Birth: If the photon has enough energy (above photon_energy_min), a new
+  !!! macro-particle is born.
+  ! It is placed at the exact position of the parent electron, moving in the
+  ! exact same direction, and added to the photon_species list.
   SUBROUTINE generate_photon(generating_electron, iphoton, eta)
 
     ! Generates a photon moving in same direction as electron
@@ -1009,7 +1036,8 @@ CONTAINS
 
       IF (use_continuous_emission) THEN
         ! Calculate photon weight from synchrotron emission rate
-        sync_rate = delta_optical_depth(eta, generating_gamma) ! This already has *dt included
+        ! This already has *dt included
+        sync_rate = delta_optical_depth(eta, generating_gamma)
         new_photon%weight = generating_electron%weight * sync_rate &
                                                        / photon_sample_fraction
       ELSE
@@ -1032,7 +1060,8 @@ CONTAINS
 
     eta_min = 10.0_num**MINVAL(log_eta)
     ! In the classical case, always use the spectrum at minimum eta
-    IF (use_classical_emission .OR. (eta < eta_min)) THEN ! Extrapolate downwards with chi \propto eta^2
+    ! Extrapolate downwards with chi \propto eta^2
+    IF (use_classical_emission .OR. (eta < eta_min)) THEN
       chi_tmp = find_value_from_table_alt(eta_min, rand_seed, &
           n_sample_eta, n_sample_chi, log_eta, log_chi, p_photon_energy)
       chi_final = chi_tmp * (eta / eta_min)**2
@@ -1050,14 +1079,15 @@ CONTAINS
 
   !!!!! Block 5: The Birth of Pairs (generate_pair & generate_pair_tri)
 
-  !!! The Split (generate_pair): The code creates a new electron and positron at the exact coordinates of the doomed photon.
+  !!! The Split (generate_pair): The code creates a new electron and positron at
+  !!! the exact coordinates of the doomed photon.
 
 
-  
 
-  
 
-  
+
+
+
   SUBROUTINE generate_pair(generating_photon, chi_val, iphoton, ielectron, &
       ipositron)
 
@@ -1083,8 +1113,10 @@ CONTAINS
     ! Determine how to split the energy amoung e-/e+
     ! IS CHI HERE SAME AS ROLAND'S? DEFINED BSinT/B_s
 
-    !!! Who gets what? It generates a random number and feeds it into the find_value_from_table function to determine epsilon_frac. 
-    ! This represents the fraction of the parent photon's energy that the electron receives.
+    !!! Who gets what? It generates a random number and feeds it into the
+    !!! find_value_from_table function to determine epsilon_frac.
+    ! This represents the fraction of the parent photon's energy that the
+    ! electron receives.
     probability_split = random()
 
     epsilon_frac = find_value_from_table(chi_val, probability_split, &
@@ -1092,8 +1124,10 @@ CONTAINS
 
     mag_p = MAX(generating_photon%particle_energy / c, c_tiny)
 
-    !!! Momentum Conservation: The electron gets $p_{e^-} = \epsilon \cdot p_\gamma$ and the positron gets  !
-    ! $p_{e^+} = (1 - \epsilon) \cdot p_\gamma$. They continue moving in the exact same direction as the original photon.
+    !!! Momentum Conservation: The electron gets $p_{e^-} = \epsilon \cdot
+    !!! p_\gamma$ and the positron gets  !
+    ! $p_{e^+} = (1 - \epsilon) \cdot p_\gamma$. They continue moving in the
+    ! exact same direction as the original photon.
     new_electron%part_p(1) = epsilon_frac * mag_p * dir_x
     new_electron%part_p(2) = epsilon_frac * mag_p * dir_y
     new_electron%part_p(3) = epsilon_frac * mag_p * dir_z
@@ -1101,7 +1135,8 @@ CONTAINS
     new_positron%part_p(1) = (1.0_num - epsilon_frac) * mag_p * dir_x
     new_positron%part_p(2) = (1.0_num - epsilon_frac) * mag_p * dir_y
     new_positron%part_p(3) = (1.0_num - epsilon_frac) * mag_p * dir_z
-    !!! Cleanup: The newly born pair gets their optical depths initialized, and the parent photon is permanently deleted from the simulation.
+    !!! Cleanup: The newly born pair gets their optical depths initialized, and
+    !!! the parent photon is permanently deleted from the simulation.
     new_electron%optical_depth = reset_optical_depth()
     new_positron%optical_depth = reset_optical_depth()
 
@@ -1167,16 +1202,23 @@ CONTAINS
 
   !!!!! Block 6: The Table Lookup Engine (find_value_from_table...)
 
-  ! These functions are the workhorses of the Monte Carlo engine. 
-  ! Since EPOCH relies on pre-computed tables for QED probabilities to save time, it needs a fast way to read them.
+  ! These functions are the workhorses of the Monte Carlo engine.
+  ! Since EPOCH relies on pre-computed tables for QED probabilities to save
+  ! time, it needs a fast way to read them.
 
-  !!! Bisection Search: Instead of checking every single row in a table to find where a particle's $\chi$ or $\eta$ value fits, 
-  ! the code uses a bisection algorithm. It checks the middle of the table; if the value is higher, it cuts the bottom half out 
-  ! and checks the middle of the top half, and so on. This drastically speeds up the search.
+  !!! Bisection Search: Instead of checking every single row in a table to find
+  !!! where a particle's $\chi$ or $\eta$ value fits,
+  ! the code uses a bisection algorithm. It checks the middle of the table; if
+  ! the value is higher, it cuts the bottom half out
+  ! and checks the middle of the top half, and so on. This drastically speeds up
+  ! the search.
 
-  !!! Linear Interpolation: A particle's exact quantum parameter will almost never perfectly match a row in the table. 
-  ! Once the bisection search finds the two closest values (the one just below and the one just above), the code performs 
-  ! a linear interpolation to generate a smooth, mathematically accurate probability.
+  !!! Linear Interpolation: A particle's exact quantum parameter will almost
+  !!! never perfectly match a row in the table.
+  ! Once the bisection search finds the two closest values (the one just below
+  ! and the one just above), the code performs
+  ! a linear interpolation to generate a smooth, mathematically accurate
+  ! probability.
   FUNCTION find_value_from_table_1d(x_in, nx, x, values)
 
     REAL(num) :: find_value_from_table_1d
@@ -1506,8 +1548,10 @@ CONTAINS
 
 
 
-  ! Sorting by Cell: Because it's computationally impossible to check every photon against every other photon in the simulation,
-  ! do_binary_collisions loops through the grid cell by cell (ix, iy). Photons can only collide with other photons in the same physical grid cell.
+  ! Sorting by Cell: Because it's computationally impossible to check every
+  ! photon against every other photon in the simulation,
+  ! do_binary_collisions loops through the grid cell by cell (ix, iy). Photons
+  ! can only collide with other photons in the same physical grid cell.
   SUBROUTINE do_binary_collisions
 
     INTEGER :: ispecies, jspecies
@@ -1556,8 +1600,9 @@ CONTAINS
   END SUBROUTINE do_binary_collisions
 
 
-  !!! Intra vs. Inter: It calls linear_Breit_Wheeler_intra if checking photons 
-  ! of the same species colliding, and inter if checking collisions between two different user-defined photon species.
+  !!! Intra vs. Inter: It calls linear_Breit_Wheeler_intra if checking photons
+  ! of the same species colliding, and inter if checking collisions between two
+  ! different user-defined photon species.
   SUBROUTINE linear_Breit_Wheeler_intra(p_list_i, ispe, &
     ixx, iyy, lbw_elec_list, lbw_posi_list)
 
@@ -1629,9 +1674,12 @@ CONTAINS
       moment_i = current_i%part_p
       moment_j = current_j%part_p
 
-      !!! Center-of-Mass (COM) Math: Inside the collision routine, it checks if the two photons 
-      ! actually have enough energy to create a pair. It calculates en_com2 (the squared COM energy). 
-      ! If this value is less than 1 (normalized to the rest mass energy of an electron-positron pair), 
+      !!! Center-of-Mass (COM) Math: Inside the collision routine, it checks if
+      !!! the two photons
+      ! actually have enough energy to create a pair. It calculates en_com2 (the
+      ! squared COM energy).
+      ! If this value is less than 1 (normalized to the rest mass energy of an
+      ! electron-positron pair),
       ! the collision is physically impossible, and it skips them.
 
       ! |p_i| and |p_j|
@@ -1669,14 +1717,17 @@ CONTAINS
       ! Later we will re-use it in the c.o.m frame.
       sigma_lbw = lbw_cross_sec(com_beta)
 
-      !!!Rolling the Dice: It calculates a collision probability (P_coll) based on 
-      ! the theoretical cross-section for the process (sigma_lbw). If a random number is less than P_coll, the collision happens!
+      !!! Rolling the Dice: It calculates a collision probability (P_coll) based
+      !!! on
+      ! the theoretical cross-section for the process (sigma_lbw). If a random
+      ! number is less than P_coll, the collision happens!
 
       ! collisional probability after modification by P_max
       P_coll = sigma_lbw * cdt_dV * MAX(weight_i, weight_j) * kappa * i_Pmax
 
       IF (random() > P_coll) THEN
-        ! These two macro-photons do not collide (due to collisional probability)
+        ! These two macro-photons do not collide (due to collisional
+        ! probability)
         ! Now move pointer to next particle
         current_i => current_j%next
         IF (ASSOCIATED(current_i)) current_j=>current_i%next
@@ -1687,13 +1738,17 @@ CONTAINS
 
       !!! The Aftermath: * It calculates the scattering angles in the COM frame.
 
-      !! It applies a Lorentz transformation (gamma_v, beta_v) to shift those momentum vectors back into the simulation's "lab" frame.
+      !! It applies a Lorentz transformation (gamma_v, beta_v) to shift those
+      !! momentum vectors back into the simulation's "lab" frame.
 
       !! It creates the new electron and positron.
 
-      !! Instead of instantly deleting the parent photons (since macro-particles represent many real photons), 
-      ! it subtracts the "weight" (the number of real particles the macro-particle represents) of the newly 
-      ! created pair from the parent photons. If a parent photon's weight drops to zero, it is deleted.
+      !! Instead of instantly deleting the parent photons (since macro-particles
+      !! represent many real photons),
+      ! it subtracts the "weight" (the number of real particles the
+      ! macro-particle represents) of the newly
+      ! created pair from the parent photons. If a parent photon's weight drops
+      ! to zero, it is deleted.
 
       ! Now, collide these two macro-photons.
       ! Pair yield
@@ -1933,7 +1988,8 @@ CONTAINS
       P_coll = sigma_lbw * cdt_dV * MAX(weight_i, weight_j) * kappa * i_Pmax
 
       IF (random() > P_coll) THEN
-        ! These two macro-photons do not collide (due to collisional probability)
+        ! These two macro-photons do not collide (due to collisional
+        ! probability)
         ! Now move pointer to next particle
         current_i => current_i%next
         current_j => current_j%next
@@ -2068,9 +2124,12 @@ CONTAINS
 
 
   !!!Finding the Heaviest Hitter (max_weight)
-  !!!This is a straightforward utility function. Because EPOCH uses "macro-particles" (where one simulated particle represents  
-  ! many real particles, denoted by its weight), the collision routines need to know the maximum weight present in a grid cell
-  ! to properly normalize the collision probabilities. This function simply walks down a linked list of particles (p_list%head
+  !!! This is a straightforward utility function. Because EPOCH uses
+  !!! "macro-particles" (where one simulated particle represents
+  ! many real particles, denoted by its weight), the collision routines need to
+  ! know the maximum weight present in a grid cell
+  ! to properly normalize the collision probabilities. This function simply
+  ! walks down a linked list of particles (p_list%head
   ! to current%next) and returns the largest weight it finds.
 
 
@@ -2093,7 +2152,8 @@ CONTAINS
   END FUNCTION max_weight
 
   !!!Setting the 3D Stage (get_orthonormal)
-  !!!When particles scatter or decay, they need a coordinate system to define their new trajectories.
+  !!! When particles scatter or decay, they need a coordinate system to define
+  !!! their new trajectories.
   SUBROUTINE get_orthonormal(vec, e1, e2, e3)
 
     ! output a set of 3D orthonormal basis (e1,e2,e3) s.t. e1 // vec
@@ -2124,9 +2184,11 @@ CONTAINS
 
 
   !!! The Total Probability (lbw_cross_sec)
-  ! This function calculates the total theoretical cross-section (the probability area) for the Linear Breit-Wheeler process
+  ! This function calculates the total theoretical cross-section (the
+  ! probability area) for the Linear Breit-Wheeler process
 
-  ! It takes the dimensionless lepton velocity in the center-of-mass frame (ze, often denoted as $\beta$) 
+  ! It takes the dimensionless lepton velocity in the center-of-mass frame (ze,
+  ! often denoted as $\beta$)
   ! and plugs it into the analytical quantum electrodynamics formula
   FUNCTION lbw_cross_sec(ze)
 
@@ -2141,13 +2203,17 @@ CONTAINS
   END FUNCTION lbw_cross_sec
 
 
-  !!! Inverse Transform Sampling for Angles (random_polar_lbw & lbw_polar_cdf_err)
+  !!! Inverse Transform Sampling for Angles (random_polar_lbw &
+  !!! lbw_polar_cdf_err)
 
-  ! When two photons collide and create a pair, the new electron and positron don't just fly off in random, 
-  ! evenly distributed directions. Some angles are physically more likely than others.
+  ! When two photons collide and create a pair, the new electron and positron
+  ! don't just fly off in random,
+  ! evenly distributed directions. Some angles are physically more likely than
+  ! others.
 
-  ! To simulate this accurately, the code uses a statistical technique called inverse transform sampling:
-  
+  ! To simulate this accurately, the code uses a statistical technique called
+  ! inverse transform sampling:
+
   FUNCTION random_polar_lbw(v, sigma)
 
   ! This function generates (the cosine of) a random polar angle

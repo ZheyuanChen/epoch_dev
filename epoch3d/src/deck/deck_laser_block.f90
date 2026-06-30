@@ -260,12 +260,14 @@ CONTAINS
 
     ! Custom laser profile keywords (same interface as epoch2d).
     IF (str_cmp(element, 'use_custom_profile')) THEN
-      working_laser%use_custom_profile = as_logical_print(value, element, errcode)
+      working_laser%use_custom_profile = as_logical_print(value, element, &
+          errcode)
       RETURN
     END IF
 
     IF (str_cmp(element, 'use_spatiotemporal_profile')) THEN
-      working_laser%use_spatiotemporal = as_logical_print(value, element, errcode)
+      working_laser%use_spatiotemporal = as_logical_print(value, element, &
+          errcode)
       RETURN
     END IF
 
