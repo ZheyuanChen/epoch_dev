@@ -326,6 +326,38 @@ CONTAINS
       working_laser%phase_data_file = TRIM(ADJUSTL(value))
       RETURN
     END IF
+
+    ! Shape and bounds of the spatiotemporal profile/phase binary files
+    ! (use_spatiotemporal_profile = T only). These files carry no embedded
+    ! header (per EPOCH's documented binary-file convention), so the grid
+    ! must be declared here. The temporal extent reuses t_start/t_end rather
+    ! than a separate pair of elements, since the laser is only ever active
+    ! within that window anyway.
+    IF (str_cmp(element, 'n_t_points') .OR. str_cmp(element, 'n_t')) THEN
+      working_laser%n_t_points = as_integer_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'n_transverse_points') &
+        .OR. str_cmp(element, 'n_y')) THEN
+      working_laser%n_transverse_points = &
+          as_integer_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'profile_transverse_min') &
+        .OR. str_cmp(element, 'y_min')) THEN
+      working_laser%profile_transverse_min = &
+          as_real_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'profile_transverse_max') &
+        .OR. str_cmp(element, 'y_max')) THEN
+      working_laser%profile_transverse_max = &
+          as_real_print(value, element, errcode)
+      RETURN
+    END IF
     !!!
 
     errcode = c_err_unknown_element

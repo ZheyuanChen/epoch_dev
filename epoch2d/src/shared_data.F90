@@ -834,22 +834,25 @@ MODULE shared_data
     CHARACTER(LEN=c_max_path_length) :: phase_data_file = ' '
 
     ! Per-laser storage for the spatiotemporal amplitude/phase profile loaded
-    ! from file. Each laser block owns its own grid and data matrices, rather
-    ! than sharing module-level storage, so that two custom-file lasers on the
-    ! same boundary (e.g. one per transverse polarisation channel, selected
-    ! via distinct pol_angle values) load independent files instead of
-    ! silently aliasing the first laser's data.
+    ! from a raw binary file (access='stream', no embedded header, per
+    ! EPOCH's documented binary-file convention). Each laser block owns its
+    ! own grid declaration and data matrices, rather than sharing
+    ! module-level storage, so that two custom-file lasers on the same
+    ! boundary (e.g. one per transverse polarisation channel, selected via
+    ! distinct pol_angle values) load independent files instead of silently
+    ! aliasing the first laser's data.
     !
     ! "Transverse" is the in-plane boundary coordinate: y for an x_min/x_max
-    ! laser, x for a y_min/y_max laser. It is named generically (not
-    ! file_y_coords) because the same field is reused for either boundary
-    ! orientation.
+    ! laser, x for a y_min/y_max laser. The grid is assumed uniform (required
+    ! by custom_laser_profile/custom_laser_phase's O(1) index lookup) and is
+    ! fully determined by these deck-declared values; the temporal extent
+    ! reuses t_start/t_end rather than a separate pair of elements.
     LOGICAL :: profile_loaded = .FALSE.
     LOGICAL :: phase_loaded = .FALSE.
+    INTEGER :: n_t_points = 0
     INTEGER :: n_transverse_points = 0
-    INTEGER :: file_n_t_points = 0
-    REAL(num), DIMENSION(:), POINTER :: file_transverse_coords => NULL()
-    REAL(num), DIMENSION(:), POINTER :: file_t_coords => NULL()
+    REAL(num) :: profile_transverse_min = 0.0_num
+    REAL(num) :: profile_transverse_max = 0.0_num
     REAL(num), DIMENSION(:,:), POINTER :: file_field_matrix => NULL()
     REAL(num), DIMENSION(:,:), POINTER :: file_phase_matrix => NULL()
   !!!

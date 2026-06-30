@@ -20,6 +20,11 @@ MODULE custom_laser
 
   INTEGER, PARAMETER :: custom_laser_lu = 150
 
+  ! EPOCH's "num" kind is hardcoded to KIND(1.d0) (constants.F90), so the
+  ! binary profile/phase files are always 8 bytes per value. Not derived via
+  ! STORAGE_SIZE (F2008) since the rest of this codebase targets F2003.
+  INTEGER, PARAMETER :: real_bytes = 8
+
 CONTAINS
 
   ! For now, we return a constant value for the time profile, but this could be
@@ -183,81 +188,47 @@ CONTAINS
 
   END SUBROUTINE custom_laser_spatial_setup
 
-  ! Establish or validate the spatial/temporal grid shared by a single laser
-  ! block's amplitude and phase profiles. The first loader to run for this
-  ! laser (whichever of amplitude or phase is requested first) reads the
-  ! coordinate arrays from its file into laser%file_transverse_coords /
-  ! laser%file_t_coords. Any subsequent loader for the SAME laser instead
-  ! validates that its file declares the same grid and consumes (discards)
-  ! the coordinate lines so the reader advances to the data matrix.
-  !
-  ! Storage lives on the laser_block instance (not module-level), so two
-  ! different laser blocks (e.g. one per transverse polarisation channel,
-  ! distinguished by pol_angle) each load and keep their own independent
-  ! grid and data, instead of colliding on shared state.
-  !
-  ! file_unit must be an open unit positioned just after the dimension line;
-  ! only rank 0 performs file I/O.
-  SUBROUTINE ensure_shared_grid(laser, file_unit, n_transverse_file, n_t_file)
-    TYPE(laser_block), INTENT(INOUT) :: laser
-    INTEGER, INTENT(IN) :: file_unit, n_transverse_file, n_t_file
+  ! Abort with a clear error if the deck didn't declare a valid spatiotemporal
+  ! grid for this laser. Required because the binary profile/phase files
+  ! carry no embedded shape header (per EPOCH's documented binary-file
+  ! convention) -- n_t_points, n_transverse_points, profile_transverse_min/max
+  ! and t_start/t_end together fully determine the uniform grid.
+  SUBROUTINE check_spatiotemporal_grid_declared(laser)
+    TYPE(laser_block), INTENT(IN) :: laser
     INTEGER :: mpi_err
-    REAL(num), ALLOCATABLE, DIMENSION(:) :: scratch_pos, scratch_t
 
-    IF (.NOT. ASSOCIATED(laser%file_transverse_coords)) THEN
-      ! First profile to load for this laser: adopt this file's grid.
-      laser%n_transverse_points = n_transverse_file
-      laser%file_n_t_points = n_t_file
-      ALLOCATE(laser%file_transverse_coords(laser%n_transverse_points))
-      ALLOCATE(laser%file_t_coords(laser%file_n_t_points))
+    IF (laser%n_t_points > 0 .AND. laser%n_transverse_points > 0 &
+        .AND. laser%profile_transverse_max > laser%profile_transverse_min &
+        .AND. laser%t_end > laser%t_start) RETURN
 
-      IF (rank == 0) THEN
-        READ(file_unit, *) laser%file_transverse_coords
-        READ(file_unit, *) laser%file_t_coords
-      END IF
-
-      CALL MPI_BCAST(laser%file_transverse_coords, &
-          laser%n_transverse_points, MPI_DOUBLE_PRECISION, 0, &
-          mpi_comm_world, mpi_err)
-      CALL MPI_BCAST(laser%file_t_coords, laser%file_n_t_points, &
-          MPI_DOUBLE_PRECISION, 0, mpi_comm_world, mpi_err)
-    ELSE
-      ! Grid already established by this laser's other profile: the
-      ! dimensions must match, since amplitude and phase are sampled on the
-      ! same LASY grid for a given laser.
-      IF (n_transverse_file /= laser%n_transverse_points &
-          .OR. n_t_file /= laser%file_n_t_points) THEN
-        IF (rank == 0) THEN
-          PRINT *, "ERROR: phase and amplitude profile grids differ: ", &
-                   n_transverse_file, " x ", n_t_file, " vs ", &
-                   laser%n_transverse_points, " x ", laser%file_n_t_points
-          CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
-        END IF
-      END IF
-
-      ! Consume this file's coordinate lines on rank 0 to reach the matrix.
-      IF (rank == 0) THEN
-        ALLOCATE(scratch_pos(n_transverse_file), scratch_t(n_t_file))
-        READ(file_unit, *) scratch_pos
-        READ(file_unit, *) scratch_t
-        DEALLOCATE(scratch_pos, scratch_t)
-      END IF
+    IF (rank == 0) THEN
+      PRINT *, "ERROR: use_spatiotemporal_profile = T requires " // &
+          "n_t_points, n_transverse_points, profile_transverse_min, " // &
+          "profile_transverse_max (and t_start < t_end) to be set in " // &
+          "the laser block."
     END IF
+    CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
 
-  END SUBROUTINE ensure_shared_grid
+  END SUBROUTINE check_spatiotemporal_grid_declared
 
 
-  ! Load a 2D spatiotemporal amplitude profile from the given filename into
-  ! the given laser block. Absolute paths are used directly; relative paths
-  ! are resolved from data_dir. Only loads once per laser (guarded by
-  ! laser%profile_loaded).
+  ! Load a 2D spatiotemporal amplitude profile from a raw binary file into
+  ! the given laser block: access='stream', no embedded header, column-major
+  ! (transverse axis fastest-varying), n_transverse_points * n_t_points
+  ! values of EPOCH's REAL(num) (always 8-byte, see real_bytes above).
+  ! Absolute paths are used directly; relative paths are resolved from
+  ! data_dir. Only loads once per laser (guarded by laser%profile_loaded).
   SUBROUTINE load_temporal_spatial_profile(laser, profile_filename)
     TYPE(laser_block), INTENT(INOUT) :: laser
     CHARACTER(LEN=*), INTENT(IN) :: profile_filename
-    INTEGER :: io_err, j, mpi_err, n_t_file, n_transverse_file
+    INTEGER :: io_err, mpi_err
+    INTEGER(KIND=8) :: expected_bytes, actual_bytes
+    LOGICAL :: file_exists
     CHARACTER(LEN=c_max_path_length) :: full_filename
 
     IF (laser%profile_loaded) RETURN
+
+    CALL check_spatiotemporal_grid_declared(laser)
 
     ! Resolve absolute vs relative path
     IF (profile_filename(1:1) == '/') THEN
@@ -266,68 +237,69 @@ CONTAINS
       full_filename = TRIM(data_dir) // '/' // TRIM(profile_filename)
     END IF
 
-    ! --- 1. RANK 0 READS DIMENSIONS ---
-    IF (rank == 0) THEN
-        OPEN(UNIT=custom_laser_lu, FILE=TRIM(full_filename), STATUS='OLD', &
-             ACTION='READ', IOSTAT=io_err)
-        IF (io_err /= 0) THEN
-            PRINT *, "ERROR: Could not open ", TRIM(full_filename)
-            CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
-        END IF
-
-        READ(custom_laser_lu, *) n_t_file, n_transverse_file
-    END IF
-
-    ! --- 2. BROADCAST DIMENSIONS SO ALL RANKS CAN ALLOCATE ---
-    CALL MPI_BCAST(n_t_file, 1, MPI_INTEGER, 0, mpi_comm_world, mpi_err)
-    CALL MPI_BCAST(n_transverse_file, 1, MPI_INTEGER, 0, mpi_comm_world, &
-        mpi_err)
-
-    ! --- 3. ESTABLISH/VALIDATE THE SHARED GRID, THEN ALLOCATE THE MATRIX ---
-    CALL ensure_shared_grid(laser, custom_laser_lu, n_transverse_file, &
-        n_t_file)
     ALLOCATE(laser%file_field_matrix(laser%n_transverse_points, &
-        laser%file_n_t_points))
+        laser%n_t_points))
 
-    ! --- 4. RANK 0 READS THE DATA MATRIX ---
     IF (rank == 0) THEN
-        DO j = 1, laser%file_n_t_points
-            READ(custom_laser_lu, *) laser%file_field_matrix(:, j)
-        END DO
+      expected_bytes = INT(laser%n_transverse_points, 8) &
+          * INT(laser%n_t_points, 8) * INT(real_bytes, 8)
 
-        CLOSE(custom_laser_lu)
+      INQUIRE(FILE=TRIM(full_filename), EXIST=file_exists, SIZE=actual_bytes)
+      IF (.NOT. file_exists) THEN
+        PRINT *, "ERROR: Could not find ", TRIM(full_filename)
+        CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
+      END IF
+      IF (actual_bytes /= expected_bytes) THEN
+        PRINT *, "ERROR: ", TRIM(full_filename), " is ", actual_bytes, &
+            " bytes; expected ", expected_bytes, &
+            " (n_transverse_points * n_t_points * 8 bytes, from the deck)"
+        CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
+      END IF
+
+      OPEN(UNIT=custom_laser_lu, FILE=TRIM(full_filename), STATUS='OLD', &
+          ACCESS='STREAM', FORM='UNFORMATTED', ACTION='READ', IOSTAT=io_err)
+      IF (io_err /= 0) THEN
+        PRINT *, "ERROR: Could not open ", TRIM(full_filename)
+        CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
+      END IF
+
+      READ(custom_laser_lu) laser%file_field_matrix
+      CLOSE(custom_laser_lu)
     END IF
 
-    ! --- 5. BROADCAST DATA TO ALL RANKS ---
     CALL MPI_BCAST(laser%file_field_matrix, &
-        laser%n_transverse_points * laser%file_n_t_points, &
-        MPI_DOUBLE_PRECISION, 0, mpi_comm_world, mpi_err)
+        laser%n_transverse_points * laser%n_t_points, &
+        mpireal, 0, mpi_comm_world, mpi_err)
 
     laser%profile_loaded = .TRUE.
 
     IF (rank == 0) THEN
         PRINT *, ">>> Custom 2D Spatiotemporal Profile Loaded Successfully! <<<"
         PRINT *, "    Grid Size: ", laser%n_transverse_points, &
-            " (Spatial) x ", laser%file_n_t_points, " (Temporal)"
+            " (Spatial) x ", laser%n_t_points, " (Temporal)"
     END IF
 
   END SUBROUTINE load_temporal_spatial_profile
 
 
-  ! Load a 2D spatiotemporal phase profile from the given filename into the
-  ! given laser block. Identical file format to the amplitude profile
-  ! (dimensions, transverse coords, t coords, then the matrix). The
-  ! spatial/temporal grid is shared with this laser's amplitude profile via
-  ! ensure_shared_grid, so only laser%file_phase_matrix is stored here. Phase
-  ! values are read as-is — the Python-side (LASY) converter writes them
-  ! already in EPOCH's sign/offset convention (phase = -phi + pi/2).
+  ! Load a 2D spatiotemporal phase profile from a raw binary file into the
+  ! given laser block. Identical file convention to the amplitude profile
+  ! (see load_temporal_spatial_profile); shares the same deck-declared grid
+  ! via laser%n_t_points/n_transverse_points/profile_transverse_min/max and
+  ! t_start/t_end. Phase values are read as-is -- the Python-side (LASY)
+  ! converter writes them already in EPOCH's sign/offset convention
+  ! (phase = -phi + pi/2).
   SUBROUTINE load_phase_profile(laser, phase_filename)
     TYPE(laser_block), INTENT(INOUT) :: laser
     CHARACTER(LEN=*), INTENT(IN) :: phase_filename
-    INTEGER :: io_err, j, mpi_err, n_t_file, n_transverse_file
+    INTEGER :: io_err, mpi_err
+    INTEGER(KIND=8) :: expected_bytes, actual_bytes
+    LOGICAL :: file_exists
     CHARACTER(LEN=c_max_path_length) :: full_filename
 
     IF (laser%phase_loaded) RETURN
+
+    CALL check_spatiotemporal_grid_declared(laser)
 
     ! Resolve absolute vs relative path
     IF (phase_filename(1:1) == '/') THEN
@@ -336,42 +308,39 @@ CONTAINS
       full_filename = TRIM(data_dir) // '/' // TRIM(phase_filename)
     END IF
 
-    ! --- 1. RANK 0 READS DIMENSIONS ---
-    IF (rank == 0) THEN
-        OPEN(UNIT=custom_laser_lu, FILE=TRIM(full_filename), STATUS='OLD', &
-             ACTION='READ', IOSTAT=io_err)
-        IF (io_err /= 0) THEN
-            PRINT *, "ERROR: Could not open ", TRIM(full_filename)
-            CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
-        END IF
-
-        READ(custom_laser_lu, *) n_t_file, n_transverse_file
-    END IF
-
-    ! --- 2. BROADCAST DIMENSIONS SO ALL RANKS CAN ALLOCATE ---
-    CALL MPI_BCAST(n_t_file, 1, MPI_INTEGER, 0, mpi_comm_world, mpi_err)
-    CALL MPI_BCAST(n_transverse_file, 1, MPI_INTEGER, 0, mpi_comm_world, &
-        mpi_err)
-
-    ! --- 3. ESTABLISH/VALIDATE THE SHARED GRID, THEN ALLOCATE THE MATRIX ---
-    CALL ensure_shared_grid(laser, custom_laser_lu, n_transverse_file, &
-        n_t_file)
     ALLOCATE(laser%file_phase_matrix(laser%n_transverse_points, &
-        laser%file_n_t_points))
+        laser%n_t_points))
 
-    ! --- 4. RANK 0 READS THE DATA MATRIX ---
     IF (rank == 0) THEN
-        DO j = 1, laser%file_n_t_points
-            READ(custom_laser_lu, *) laser%file_phase_matrix(:, j)
-        END DO
+      expected_bytes = INT(laser%n_transverse_points, 8) &
+          * INT(laser%n_t_points, 8) * INT(real_bytes, 8)
 
-        CLOSE(custom_laser_lu)
+      INQUIRE(FILE=TRIM(full_filename), EXIST=file_exists, SIZE=actual_bytes)
+      IF (.NOT. file_exists) THEN
+        PRINT *, "ERROR: Could not find ", TRIM(full_filename)
+        CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
+      END IF
+      IF (actual_bytes /= expected_bytes) THEN
+        PRINT *, "ERROR: ", TRIM(full_filename), " is ", actual_bytes, &
+            " bytes; expected ", expected_bytes, &
+            " (n_transverse_points * n_t_points * 8 bytes, from the deck)"
+        CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
+      END IF
+
+      OPEN(UNIT=custom_laser_lu, FILE=TRIM(full_filename), STATUS='OLD', &
+          ACCESS='STREAM', FORM='UNFORMATTED', ACTION='READ', IOSTAT=io_err)
+      IF (io_err /= 0) THEN
+        PRINT *, "ERROR: Could not open ", TRIM(full_filename)
+        CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
+      END IF
+
+      READ(custom_laser_lu) laser%file_phase_matrix
+      CLOSE(custom_laser_lu)
     END IF
 
-    ! --- 5. BROADCAST DATA TO ALL RANKS ---
     CALL MPI_BCAST(laser%file_phase_matrix, &
-        laser%n_transverse_points * laser%file_n_t_points, &
-        MPI_DOUBLE_PRECISION, 0, mpi_comm_world, mpi_err)
+        laser%n_transverse_points * laser%n_t_points, &
+        mpireal, 0, mpi_comm_world, mpi_err)
 
     laser%phase_loaded = .TRUE.
 
@@ -379,7 +348,7 @@ CONTAINS
         PRINT *, ">>> Custom 2D Spatiotemporal Phase Profile Loaded " // &
             "Successfully! <<<"
         PRINT *, "    Grid Size: ", laser%n_transverse_points, &
-            " (Spatial) x ", laser%file_n_t_points, " (Temporal)"
+            " (Spatial) x ", laser%n_t_points, " (Temporal)"
     END IF
 
   END SUBROUTINE load_phase_profile
@@ -388,7 +357,7 @@ CONTAINS
     TYPE(laser_block), INTENT(INOUT) :: laser
     REAL(num), INTENT(IN) :: pos
     INTEGER :: idx_pos, idx_t
-    REAL(num) :: u, v, q11, q12, q21, q22
+    REAL(num) :: dy, dt, pos0, t0, u, v, q11, q12, q21, q22
     CHARACTER(LEN=c_max_path_length) :: fname
 
     ! Ensure this laser's 2D profile data is loaded into memory on first
@@ -403,65 +372,35 @@ CONTAINS
       CALL load_temporal_spatial_profile(laser, fname)
     END IF
 
-    ! Default return value if coordinates fall completely outside our file
-    ! scope.
+    ! Default return value if coordinates fall completely outside the
+    ! deck-declared grid.
     custom_laser_profile = 0.0_num
 
     ! --- 1. Boundary & Guard Checks ---
-    ! Spatial check (pos = current transverse coordinate on grid)
-    IF (pos < laser%file_transverse_coords(1) .OR. &
-        pos > laser%file_transverse_coords(laser%n_transverse_points)) RETURN
-
-    ! Temporal check (time = current global simulation time from shared_data)
-    IF (time < laser%file_t_coords(1) &
-        .OR. time > laser%file_t_coords(laser%file_n_t_points)) RETURN
-
+    IF (pos < laser%profile_transverse_min &
+        .OR. pos > laser%profile_transverse_max) RETURN
+    IF (time < laser%t_start .OR. time > laser%t_end) RETURN
 
     ! --- 2. Locate the Bounding Cell Box ---
-    ! Find lower index spatial bounding point
+    ! The grid is uniform by construction (deck-declared bounds/counts), so
+    ! the cell spacing and bounding indices are computed directly -- no
+    ! stored coordinate array to search.
+    dy = (laser%profile_transverse_max - laser%profile_transverse_min) &
+        / REAL(laser%n_transverse_points - 1, num)
+    dt = (laser%t_end - laser%t_start) / REAL(laser%n_t_points - 1, num)
 
-    ! The commented code should apply for an arbitraryly spaced laser profile
-    ! grid. However, this is an O(n) search and is not efficient for large
-    ! grids.
-    ! Instead, we can use a direct index calculation for uniform grids, which
-    ! is O(1). The Python script guarantees uniform spacing using np.linspace.
-
-    !!!!!! Must ensure that the laser profile file is generated with uniform
-    !!!!!! spacing for this optimization to be valid. !!!!!!
-
-    !idx_pos = 1
-    !DO WHILE (laser%file_transverse_coords(idx_pos+1) < pos &
-    !    .AND. idx_pos < laser%n_transverse_points - 1)
-    !   idx_pos = idx_pos + 1
-    !END DO
-
-    ! Find lower index temporal bounding point
-    !idx_t = 1
-    !DO WHILE (laser%file_t_coords(idx_t+1) < time &
-    !    .AND. idx_t < laser%file_n_t_points - 1)
-    !   idx_t = idx_t + 1
-    !END DO
-
-    ! Direct index calculation (O(1)) — valid only for uniform grids. This is
-    ! likely to be visited again if we decide to support non-uniform grids in
-    ! the future.
-    idx_pos = INT((pos - laser%file_transverse_coords(1)) &
-        / (laser%file_transverse_coords(2) &
-        - laser%file_transverse_coords(1))) + 1
-    idx_t = INT((time - laser%file_t_coords(1)) &
-        / (laser%file_t_coords(2) - laser%file_t_coords(1))) + 1
+    idx_pos = INT((pos - laser%profile_transverse_min) / dy) + 1
+    idx_t = INT((time - laser%t_start) / dt) + 1
 
     ! Clamp to valid interpolation range [1, n-1]
     idx_pos = MAX(1, MIN(idx_pos, laser%n_transverse_points - 1))
-    idx_t = MAX(1, MIN(idx_t, laser%file_n_t_points - 1))
+    idx_t = MAX(1, MIN(idx_t, laser%n_t_points - 1))
 
     ! --- 3. Bilinear Interpolation Math ---
-    ! Compute normalised fractional positions within the grid cell
-    u = (pos - laser%file_transverse_coords(idx_pos)) &
-        / (laser%file_transverse_coords(idx_pos+1) &
-        - laser%file_transverse_coords(idx_pos))
-    v = (time - laser%file_t_coords(idx_t)) &
-        / (laser%file_t_coords(idx_t+1) - laser%file_t_coords(idx_t))
+    pos0 = laser%profile_transverse_min + REAL(idx_pos - 1, num) * dy
+    t0 = laser%t_start + REAL(idx_t - 1, num) * dt
+    u = (pos - pos0) / dy
+    v = (time - t0) / dt
 
     ! Grab the 4 surrounding pixel values from the data matrix
     q11 = laser%file_field_matrix(idx_pos,   idx_t)      ! Bottom-Left
@@ -480,13 +419,12 @@ CONTAINS
   ! Bilinear interpolation of this laser's spatiotemporal phase profile at
   ! spatial position 'pos' and the current simulation 'time'. Mirrors
   ! custom_laser_profile exactly, but reads from laser%file_phase_matrix
-  ! (loaded by load_phase_profile) on the shared laser%file_transverse_coords
-  ! / laser%file_t_coords grid.
+  ! (loaded by load_phase_profile).
   REAL(num) FUNCTION custom_laser_phase(laser, pos)
     TYPE(laser_block), INTENT(INOUT) :: laser
     REAL(num), INTENT(IN) :: pos
     INTEGER :: idx_pos, idx_t
-    REAL(num) :: u, v, q11, q12, q21, q22
+    REAL(num) :: dy, dt, pos0, t0, u, v, q11, q12, q21, q22
     CHARACTER(LEN=c_max_path_length) :: fname
 
     ! Ensure this laser's 2D phase data is loaded into memory on first call.
@@ -500,40 +438,33 @@ CONTAINS
       CALL load_phase_profile(laser, fname)
     END IF
 
-    ! Default return value if coordinates fall completely outside our file
-    ! scope. The amplitude envelope is likewise zero there, so the phase value
-    ! is immaterial.
+    ! Default return value if coordinates fall completely outside the
+    ! deck-declared grid. The amplitude envelope is likewise zero there, so
+    ! the phase value is immaterial.
     custom_laser_phase = 0.0_num
 
     ! --- 1. Boundary & Guard Checks ---
-    ! Spatial check (pos = current transverse coordinate on grid)
-    IF (pos < laser%file_transverse_coords(1) .OR. &
-        pos > laser%file_transverse_coords(laser%n_transverse_points)) RETURN
-
-    ! Temporal check (time = current global simulation time from shared_data)
-    IF (time < laser%file_t_coords(1) &
-        .OR. time > laser%file_t_coords(laser%file_n_t_points)) RETURN
+    IF (pos < laser%profile_transverse_min &
+        .OR. pos > laser%profile_transverse_max) RETURN
+    IF (time < laser%t_start .OR. time > laser%t_end) RETURN
 
     ! --- 2. Locate the Bounding Cell Box ---
-    ! Direct index calculation (O(1)) — valid only for uniform grids, which the
-    ! Python generator guarantees via np.linspace (same grid as the amplitude).
-    idx_pos = INT((pos - laser%file_transverse_coords(1)) &
-        / (laser%file_transverse_coords(2) &
-        - laser%file_transverse_coords(1))) + 1
-    idx_t = INT((time - laser%file_t_coords(1)) &
-        / (laser%file_t_coords(2) - laser%file_t_coords(1))) + 1
+    dy = (laser%profile_transverse_max - laser%profile_transverse_min) &
+        / REAL(laser%n_transverse_points - 1, num)
+    dt = (laser%t_end - laser%t_start) / REAL(laser%n_t_points - 1, num)
+
+    idx_pos = INT((pos - laser%profile_transverse_min) / dy) + 1
+    idx_t = INT((time - laser%t_start) / dt) + 1
 
     ! Clamp to valid interpolation range [1, n-1]
     idx_pos = MAX(1, MIN(idx_pos, laser%n_transverse_points - 1))
-    idx_t = MAX(1, MIN(idx_t, laser%file_n_t_points - 1))
+    idx_t = MAX(1, MIN(idx_t, laser%n_t_points - 1))
 
     ! --- 3. Bilinear Interpolation Math ---
-    ! Compute normalised fractional positions within the grid cell
-    u = (pos - laser%file_transverse_coords(idx_pos)) &
-        / (laser%file_transverse_coords(idx_pos+1) &
-        - laser%file_transverse_coords(idx_pos))
-    v = (time - laser%file_t_coords(idx_t)) &
-        / (laser%file_t_coords(idx_t+1) - laser%file_t_coords(idx_t))
+    pos0 = laser%profile_transverse_min + REAL(idx_pos - 1, num) * dy
+    t0 = laser%t_start + REAL(idx_t - 1, num) * dt
+    u = (pos - pos0) / dy
+    v = (time - t0) / dt
 
     ! Grab the 4 surrounding pixel values from the phase matrix
     q11 = laser%file_phase_matrix(idx_pos,   idx_t)      ! Bottom-Left

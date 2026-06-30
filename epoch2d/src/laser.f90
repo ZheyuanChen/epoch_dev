@@ -137,9 +137,6 @@ CONTAINS
 
     IF (ASSOCIATED(laser%profile)) DEALLOCATE(laser%profile)
     IF (ASSOCIATED(laser%phase)) DEALLOCATE(laser%phase)
-    IF (ASSOCIATED(laser%file_transverse_coords)) &
-        DEALLOCATE(laser%file_transverse_coords)
-    IF (ASSOCIATED(laser%file_t_coords)) DEALLOCATE(laser%file_t_coords)
     IF (ASSOCIATED(laser%file_field_matrix)) DEALLOCATE(laser%file_field_matrix)
     IF (ASSOCIATED(laser%file_phase_matrix)) DEALLOCATE(laser%file_phase_matrix)
     IF (laser%use_profile_function) &
