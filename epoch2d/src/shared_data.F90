@@ -832,6 +832,26 @@ MODULE shared_data
     ! Path to the phase data file. If blank, defaults to 'phase_profile.dat'.
     ! Relative paths are resolved from data_dir; absolute paths used as-is.
     CHARACTER(LEN=c_max_path_length) :: phase_data_file = ' '
+
+    ! Per-laser storage for the spatiotemporal amplitude/phase profile loaded
+    ! from file. Each laser block owns its own grid and data matrices, rather
+    ! than sharing module-level storage, so that two custom-file lasers on the
+    ! same boundary (e.g. one per transverse polarisation channel, selected
+    ! via distinct pol_angle values) load independent files instead of
+    ! silently aliasing the first laser's data.
+    !
+    ! "Transverse" is the in-plane boundary coordinate: y for an x_min/x_max
+    ! laser, x for a y_min/y_max laser. It is named generically (not
+    ! file_y_coords) because the same field is reused for either boundary
+    ! orientation.
+    LOGICAL :: profile_loaded = .FALSE.
+    LOGICAL :: phase_loaded = .FALSE.
+    INTEGER :: n_transverse_points = 0
+    INTEGER :: file_n_t_points = 0
+    REAL(num), DIMENSION(:), POINTER :: file_transverse_coords => NULL()
+    REAL(num), DIMENSION(:), POINTER :: file_t_coords => NULL()
+    REAL(num), DIMENSION(:,:), POINTER :: file_field_matrix => NULL()
+    REAL(num), DIMENSION(:,:), POINTER :: file_phase_matrix => NULL()
   !!!
 
     TYPE(primitive_stack) :: time_function, phase_function, profile_function
