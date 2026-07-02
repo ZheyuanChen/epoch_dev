@@ -177,8 +177,12 @@ CONTAINS
   ! the local transverse coordinate range plus a one-cell margin, rather
   ! than the full plane on every rank. Ranks that do not own the laser's
   ! boundary face never sample it at all and store an empty slab. When
-  ! the local patch can change during the run (dynamic load balancing, or
-  ! a moving window shifting x for a y/z-boundary laser), fall back to
+  ! the local patch can change after this is computed -- dynamic load
+  ! balancing (use_balance), the one-off startup load balance
+  ! (use_pre_balance, which defaults to .TRUE. and runs *after* laser
+  ! setup, in pre_load_balance/setup.F90 -- confirmed to redistribute
+  ! domain ownership between ranks whenever particle load is uneven), or
+  ! a moving window shifting x for a y/z-boundary laser -- fall back to
   ! the full plane.
   SUBROUTINE local_slab_window(laser, i1_lo, i1_hi, i2_lo, i2_hi)
 
@@ -199,7 +203,8 @@ CONTAINS
 
     x_is_transverse = laser%boundary /= c_bd_x_min &
         .AND. laser%boundary /= c_bd_x_max
-    IF (use_balance .OR. (move_window .AND. x_is_transverse)) THEN
+    IF (use_balance .OR. use_pre_balance &
+        .OR. (move_window .AND. x_is_transverse)) THEN
       i1_lo = 1
       i1_hi = laser%n_tr1_points
       i2_lo = 1
