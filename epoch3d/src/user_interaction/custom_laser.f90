@@ -171,10 +171,169 @@ CONTAINS
 
 
 
+  ! Determine which window of the spatiotemporal file grid this rank
+  ! needs to keep in memory. The sampler is only ever called for this
+  ! rank's own boundary cells, so it is enough to store a slab covering
+  ! the local transverse coordinate range plus a one-cell margin, rather
+  ! than the full plane on every rank. Ranks that do not own the laser's
+  ! boundary face never sample it at all and store an empty slab. When
+  ! the local patch can change during the run (dynamic load balancing, or
+  ! a moving window shifting x for a y/z-boundary laser), fall back to
+  ! the full plane.
+  SUBROUTINE local_slab_window(laser, i1_lo, i1_hi, i2_lo, i2_hi)
+
+    TYPE(laser_block), INTENT(IN) :: laser
+    INTEGER, INTENT(OUT) :: i1_lo, i1_hi, i2_lo, i2_hi
+    REAL(num) :: p1_lo, p1_hi, p2_lo, p2_hi, d1, d2
+    LOGICAL :: x_is_transverse
+    INTEGER :: idx
+
+    IF (.NOT. is_boundary(laser%boundary)) THEN
+      ! Empty slab: this rank never samples this laser
+      i1_lo = 1
+      i1_hi = 0
+      i2_lo = 1
+      i2_hi = 0
+      RETURN
+    END IF
+
+    x_is_transverse = laser%boundary /= c_bd_x_min &
+        .AND. laser%boundary /= c_bd_x_max
+    IF (use_balance .OR. (move_window .AND. x_is_transverse)) THEN
+      i1_lo = 1
+      i1_hi = laser%n_tr1_points
+      i2_lo = 1
+      i2_hi = laser%n_tr2_points
+      RETURN
+    END IF
+
+    ! Local transverse patch actually sampled (cell centres 0:n)
+    SELECT CASE(laser%boundary)
+      CASE(c_bd_x_min, c_bd_x_max)
+        p1_lo = y(0)
+        p1_hi = y(ny)
+        p2_lo = z(0)
+        p2_hi = z(nz)
+      CASE(c_bd_y_min, c_bd_y_max)
+        p1_lo = x(0)
+        p1_hi = x(nx)
+        p2_lo = z(0)
+        p2_hi = z(nz)
+      CASE(c_bd_z_min, c_bd_z_max)
+        p1_lo = x(0)
+        p1_hi = x(nx)
+        p2_lo = y(0)
+        p2_hi = y(ny)
+    END SELECT
+
+    d1 = (laser%profile_tr1_max - laser%profile_tr1_min) &
+        / REAL(laser%n_tr1_points - 1, num)
+    d2 = (laser%profile_tr2_max - laser%profile_tr2_min) &
+        / REAL(laser%n_tr2_points - 1, num)
+
+    ! Same index formula and clamping as sample_file_matrix; the sampler
+    ! touches indices [idx, idx+1], widened here by one cell each side
+    idx = MAX(1, MIN(INT((p1_lo - laser%profile_tr1_min) / d1) + 1, &
+        laser%n_tr1_points - 1))
+    i1_lo = MAX(1, idx - 1)
+    idx = MAX(1, MIN(INT((p1_hi - laser%profile_tr1_min) / d1) + 1, &
+        laser%n_tr1_points - 1))
+    i1_hi = MIN(laser%n_tr1_points, idx + 2)
+
+    idx = MAX(1, MIN(INT((p2_lo - laser%profile_tr2_min) / d2) + 1, &
+        laser%n_tr2_points - 1))
+    i2_lo = MAX(1, idx - 1)
+    idx = MAX(1, MIN(INT((p2_hi - laser%profile_tr2_min) / d2) + 1, &
+        laser%n_tr2_points - 1))
+    i2_hi = MIN(laser%n_tr2_points, idx + 2)
+
+  END SUBROUTINE local_slab_window
+
+
+
+  ! Load one spatiotemporal binary file into a per-rank slab, stored on
+  ! laser%file_phase_matrix (load_phase = .TRUE.) or
+  ! laser%file_field_matrix (.FALSE.). The slab is allocated with its
+  ! global index bounds, which the pointer keeps, so the sampler needs no
+  ! index translation. Rank 0 reads the file one time-slice at a time and
+  ! broadcasts it; each rank copies out only its local window (see
+  ! local_slab_window), so no rank ever has to hold the full 3D array --
+  ! just its slab plus one transient slice. File existence/size checks as
+  ! in load_binary_file.
+  SUBROUTINE load_spatiotemporal_file(laser, filename, load_phase)
+
+    TYPE(laser_block), INTENT(INOUT) :: laser
+    CHARACTER(LEN=*), INTENT(IN) :: filename
+    LOGICAL, INTENT(IN) :: load_phase
+    REAL(num), DIMENSION(:,:,:), POINTER :: matrix
+    REAL(num), ALLOCATABLE, DIMENSION(:,:) :: slice
+    INTEGER :: i1_lo, i1_hi, i2_lo, i2_hi, it, n1, n2
+    INTEGER :: io_err, mpi_err
+    INTEGER(KIND=8) :: expected_bytes, actual_bytes
+    LOGICAL :: file_exists
+    CHARACTER(LEN=c_max_path_length) :: full_filename
+
+    n1 = laser%n_tr1_points
+    n2 = laser%n_tr2_points
+
+    IF (filename(1:1) == '/') THEN
+      full_filename = TRIM(filename)
+    ELSE
+      full_filename = TRIM(data_dir) // '/' // TRIM(filename)
+    END IF
+
+    IF (rank == 0) THEN
+      expected_bytes = INT(n1, 8) * INT(n2, 8) &
+          * INT(laser%n_t_points, 8) * INT(real_bytes, 8)
+
+      INQUIRE(FILE=TRIM(full_filename), EXIST=file_exists, SIZE=actual_bytes)
+      IF (.NOT. file_exists) THEN
+        PRINT *, 'ERROR: Could not find ', TRIM(full_filename)
+        CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
+      END IF
+      IF (actual_bytes /= expected_bytes) THEN
+        PRINT *, 'ERROR: ', TRIM(full_filename), ' is ', actual_bytes, &
+            ' bytes; expected ', expected_bytes, &
+            ' (product of the deck-declared point counts * 8 bytes)'
+        CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
+      END IF
+
+      OPEN(UNIT=custom_laser_lu, FILE=TRIM(full_filename), STATUS='OLD', &
+          ACCESS='STREAM', FORM='UNFORMATTED', ACTION='READ', IOSTAT=io_err)
+      IF (io_err /= 0) THEN
+        PRINT *, 'ERROR: Could not open ', TRIM(full_filename)
+        CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
+      END IF
+    END IF
+
+    CALL local_slab_window(laser, i1_lo, i1_hi, i2_lo, i2_hi)
+    ALLOCATE(matrix(i1_lo:i1_hi, i2_lo:i2_hi, laser%n_t_points))
+
+    ALLOCATE(slice(n1, n2))
+    DO it = 1, laser%n_t_points
+      IF (rank == 0) READ(custom_laser_lu) slice
+      CALL MPI_BCAST(slice, n1 * n2, mpireal, 0, mpi_comm_world, mpi_err)
+      matrix(:, :, it) = slice(i1_lo:i1_hi, i2_lo:i2_hi)
+    END DO
+    DEALLOCATE(slice)
+
+    IF (rank == 0) CLOSE(custom_laser_lu)
+
+    IF (load_phase) THEN
+      laser%file_phase_matrix => matrix
+    ELSE
+      laser%file_field_matrix => matrix
+    END IF
+
+  END SUBROUTINE load_spatiotemporal_file
+
+
+
   ! Load a 3D spatiotemporal amplitude profile from a raw binary file into
   ! the given laser block: Fortran column-major order with tr1
   ! fastest-varying and time slowest, i.e. n_tr1 * n_tr2 * n_t values
-  ! written as a single array. Only loads once per laser (guarded by
+  ! written as a single array. Stored as a per-rank slab (see
+  ! load_spatiotemporal_file). Only loads once per laser (guarded by
   ! laser%profile_loaded).
   SUBROUTINE load_temporal_spatial_profile(laser, profile_filename)
 
@@ -185,11 +344,7 @@ CONTAINS
 
     CALL check_file_grid_declared(laser, .TRUE.)
 
-    ALLOCATE(laser%file_field_matrix(laser%n_tr1_points, &
-        laser%n_tr2_points, laser%n_t_points))
-
-    CALL load_binary_file(profile_filename, laser%file_field_matrix, &
-        laser%n_tr1_points * laser%n_tr2_points * laser%n_t_points)
+    CALL load_spatiotemporal_file(laser, profile_filename, .FALSE.)
 
     laser%profile_loaded = .TRUE.
 
@@ -205,10 +360,11 @@ CONTAINS
 
 
   ! Load a 3D spatiotemporal phase profile from a raw binary file into the
-  ! given laser block. Identical file convention to the amplitude profile
-  ! (see load_temporal_spatial_profile); shares the same deck-declared
-  ! grid. Phase values are read as-is -- the Python-side converter writes
-  ! them already in EPOCH's sign/offset convention (phase = -phi + pi/2).
+  ! given laser block. Identical file convention and per-rank slab storage
+  ! to the amplitude profile (see load_temporal_spatial_profile); shares
+  ! the same deck-declared grid. Phase values are read as-is -- the
+  ! Python-side converter writes them already in EPOCH's sign/offset
+  ! convention (phase = -phi + pi/2).
   SUBROUTINE load_phase_profile(laser, phase_filename)
 
     TYPE(laser_block), INTENT(INOUT) :: laser
@@ -218,11 +374,7 @@ CONTAINS
 
     CALL check_file_grid_declared(laser, .TRUE.)
 
-    ALLOCATE(laser%file_phase_matrix(laser%n_tr1_points, &
-        laser%n_tr2_points, laser%n_t_points))
-
-    CALL load_binary_file(phase_filename, laser%file_phase_matrix, &
-        laser%n_tr1_points * laser%n_tr2_points * laser%n_t_points)
+    CALL load_spatiotemporal_file(laser, phase_filename, .TRUE.)
 
     laser%phase_loaded = .TRUE.
 
@@ -401,17 +553,23 @@ CONTAINS
   ! outside the deck-declared grid: the amplitude envelope is zero there
   ! too, so a zero phase is immaterial. The uniform grid is reconstructed
   ! from the deck-declared bounds/counts and t_start/t_end -- there is no
-  ! stored coordinate array to search.
+  ! stored coordinate array to search. The matrix is passed as a pointer
+  ! so that the per-rank slab's global index bounds (see
+  ! load_spatiotemporal_file) are preserved.
   REAL(num) FUNCTION sample_file_matrix(laser, matrix, pos1, pos2)
 
     TYPE(laser_block), INTENT(IN) :: laser
-    REAL(num), DIMENSION(:,:,:), INTENT(IN) :: matrix
+    REAL(num), DIMENSION(:,:,:), POINTER :: matrix
     REAL(num), INTENT(IN) :: pos1, pos2
-    INTEGER :: i1, i2, it
+    INTEGER :: i1, i2, it, mpi_err
     REAL(num) :: d1, d2, dtf, p10, p20, t0, u, v, w
     REAL(num) :: f00, f10, f01, f11
 
     sample_file_matrix = 0.0_num
+
+    ! Ranks that do not own this laser's boundary face store an empty
+    ! slab and never legitimately need a sample
+    IF (SIZE(matrix) == 0) RETURN
 
     ! --- 1. Boundary & Guard Checks ---
     IF (pos1 < laser%profile_tr1_min &
@@ -435,6 +593,17 @@ CONTAINS
     i1 = MAX(1, MIN(i1, laser%n_tr1_points - 1))
     i2 = MAX(1, MIN(i2, laser%n_tr2_points - 1))
     it = MAX(1, MIN(it, laser%n_t_points - 1))
+
+    ! The slab covers this rank's patch by construction
+    ! (local_slab_window); an index outside it means the domain was
+    ! reconfigured in a way that routine did not anticipate -- fail
+    ! loudly rather than silently inject wrong fields
+    IF (i1 < LBOUND(matrix, 1) .OR. i1 + 1 > UBOUND(matrix, 1) &
+        .OR. i2 < LBOUND(matrix, 2) .OR. i2 + 1 > UBOUND(matrix, 2)) THEN
+      PRINT *, 'ERROR: custom laser profile sampled outside the stored ', &
+          'per-rank slab on rank ', rank
+      CALL MPI_ABORT(mpi_comm_world, 1, mpi_err)
+    END IF
 
     ! --- 3. Trilinear Interpolation Math ---
     p10 = laser%profile_tr1_min + REAL(i1 - 1, num) * d1
