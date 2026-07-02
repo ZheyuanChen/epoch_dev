@@ -265,6 +265,12 @@ CONTAINS
     !!! ADD THIS DECLARATION for custom (file-based) laser phase
     REAL(num) :: pos
 
+    ! On the static spatial path the file phase is interpolated onto
+    ! laser%phase once at setup (custom_laser_spatial_setup); there is
+    ! nothing to update per step, and any deck 'phase = ...' expression
+    ! must not overwrite it.
+    IF (laser%use_phase_from_file .AND. .NOT. laser%use_spatiotemporal) RETURN
+
     err = 0
     CALL populate_pack_from_laser(laser, parameters)
 
