@@ -134,8 +134,12 @@ CONTAINS
     ! that the MPI_BCAST calls involve ALL ranks (deferring the load to the
     ! per-boundary-cell timestepping loop risks an MPI deadlock). The
     ! routine dispatches internally on use_custom_profile,
-    ! use_spatiotemporal and use_phase_from_file.
-    CALL custom_laser_spatial_setup(laser)
+    ! use_spatiotemporal and use_phase_from_file. allow_defer = .TRUE.
+    ! lets it instead postpone a spatiotemporal load until
+    ! finalize_custom_laser_domain confirms the domain has settled, when
+    ! use_pre_balance means it might otherwise move (see
+    ! local_slab_window in custom_laser.f90).
+    CALL custom_laser_spatial_setup(laser, allow_defer=.TRUE.)
 
   END SUBROUTINE attach_laser
 
