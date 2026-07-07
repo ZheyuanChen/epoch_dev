@@ -332,8 +332,9 @@ CONTAINS
       CALL remove_particle_from_partlist(species_list(iphoton)%attached_list, &
           photon)
       CALL destroy_particle(photon)
-    ELSE 
-      photon%optical_depth_bremsstrahlung = -LOG(random())
+    ELSE
+      photon%optical_depth_bremsstrahlung = &
+          photon%optical_depth_bremsstrahlung - LOG(random())
     END IF
 
   END SUBROUTINE generate_pair
