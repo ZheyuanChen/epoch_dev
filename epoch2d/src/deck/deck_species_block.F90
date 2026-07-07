@@ -2166,8 +2166,10 @@ CONTAINS
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
+#ifdef BREMSSTRAHLUNG
       IF (bethe_heitler_muon_species == -1) &
           bethe_heitler_muon_species = species_id
+#endif
       RETURN
     END IF
 
@@ -2178,8 +2180,10 @@ CONTAINS
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
+#ifdef BREMSSTRAHLUNG
       IF (bethe_heitler_antimuon_species == -1) &
           bethe_heitler_antimuon_species = species_id
+#endif
       RETURN
     END IF
 

@@ -32,11 +32,12 @@ Seven commits were cherry-picked from `upstream/stu/muons_and_trident`
 | `fbb9a945` | `a610508d` | Fix: muon gamma sampling |
 | `92552de6` | `8485e692` | Fix: optical-depth accumulation at high boost (epoch3d) |
 
-One follow-up commit of our own:
+Two follow-up commits of our own:
 
 | Commit | Description |
 |---|---|
 | `a5716caf` | Port the optical-depth accumulation fix (`92552de6`, upstream PR #818) to epoch1d and epoch2d, which upstream had only applied to epoch3d |
+| `3c373673` | Guard the `identify:muon` / `identify:antimuon` handlers in `deck_species_block.F90` with `#ifdef BREMSSTRAHLUNG`: they referenced species variables that only exist under that define, breaking any build without it. Upstream never noticed because their Makefile force-enables the define. |
 
 ### Conflict resolutions and deviations from upstream
 
