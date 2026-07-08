@@ -238,6 +238,55 @@ end:output
 - Bethe-Heitler sampling uses Geant4 algorithms (see
   `bethe_heitler.F90`).
 
+### 2.7 Relationship to Arran, Morris & Ridgers (2026)
+
+Arran, Morris and Ridgers, *"Bayesian optimisation of non-linear
+Breit-Wheeler pair production in simulated laser experiments"*, New J.
+Phys. **28**, 044304 (2026) — co-authored by Stuart Morris, the same
+author as the `boost_pairs`/`boost_muons` commits — analyses exactly
+this splitting scheme and classifies optical-depth splitting
+algorithms into four variants (their Table 1), distinguished by what
+happens to the parent's optical depth when it *survives* a boosted
+emission (probability `1 - 1/N`):
+
+| Paper's algorithm | Survival-path behaviour | Valid range | Energy conservation |
+|---|---|---|---|
+| Naive | redraw optical depth from scratch, discarding the "overshoot" | λ ≪ 1 | exact, but the **rate itself becomes biased** once λ isn't tiny (their Fig. 1(b): ~2× underestimate at 1 GeV photon energy) |
+| Additive | add the new draw onto the accumulated (overshot) value | λ ≲ 1 | on average |
+| Additive + subcycling | as additive, plus a loop allowing multiple emissions per timestep | any λ | on average |
+| Poisson | full Poisson sample every timestep | any λ | exact |
+
+Matching this to the actual code:
+
+- **Bethe-Heitler**, after the accumulation fix ported in this branch
+  (`92552de6` / `a5716caf`), uses
+  `photon%optical_depth_bremsstrahlung = photon%optical_depth_bremsstrahlung
+  - LOG(random())` on survival — adding onto the existing overshot
+  value. This is the paper's **Additive** method (valid for λ ≲ 1).
+- **Nonlinear Breit-Wheeler** (`photons.F90`, `generate_pair`),
+  **field trident** (`generate_pair_tri`), **nuclear trident**
+  (`brem_trident.F90`), and **muon pair production**
+  (`brem_muon.F90`) never received the equivalent fix: their survival
+  branches call `reset_optical_depth()`, a fresh draw that discards
+  the overshoot. These four channels therefore implement the paper's
+  **Naive** method, which the paper's own Fig. 1(b) shows becoming
+  measurably inaccurate once the per-step decay probability stops
+  being negligible.
+- None of the six channels (LBW included) implement **subcycling** or
+  full **Poisson** sampling, so no channel in this codebase correctly
+  captures more than one emission per parent per timestep — the
+  guidance in §2.5 to keep `N * delta_opdep ≪ 1` is not just a
+  performance tip, it is the paper's stated validity condition for the
+  Additive method, and the *only* thing keeping the four Naive
+  channels close to correct at all.
+
+Porting the same additive-accumulation pattern from Bethe-Heitler to
+the other four channels would bring `boost_pairs`/`boost_muons` to a
+consistent, better-justified Method II across the board; adding a
+subcycling loop would be needed to safely support `boost_pairs` large
+enough that λ approaches or exceeds 1. Neither change is included in
+this integration.
+
 ---
 
 ## 3. Notes and caveats
@@ -246,12 +295,12 @@ end:output
   same commits and are fully integrated, but are opt-in at compile time
   and default-off at runtime; they add nothing to a build without the
   define.
-- **Survival-path optical depth**: the accumulation fix is applied to
-  Bethe-Heitler in all three codes. The equivalent survival paths in
-  nonlinear Breit-Wheeler (`photons.F90`) and the muon module still
-  redraw a fresh optical depth, as upstream wrote them; at very high
-  `boost_pairs` this slightly under-counts multiple conversions per
-  step for those channels.
+- **Survival-path optical depth**: see §2.7 — only Bethe-Heitler uses
+  the accumulation ("Additive") fix; nonlinear Breit-Wheeler, field
+  trident, nuclear trident, and the muon channel all still redraw a
+  fresh optical depth ("Naive") on survival, as upstream wrote them.
+  At high `boost_pairs` this under-counts multiple conversions and
+  biases the rate for those four channels, per Arran et al. (2026).
 - **`.vscode/`** remains untracked (editor-local configuration).
 - The custom laser profile injection feature carried over unchanged
   from `upstream-pr-custom-laser-injection`; see
