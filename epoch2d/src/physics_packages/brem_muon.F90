@@ -280,7 +280,8 @@ MODULE brem_muon
           photon)
       CALL destroy_particle(photon)
     ELSE
-      photon%optical_depth_brem_muon = -LOG(random())
+      photon%optical_depth_brem_muon = &
+          photon%optical_depth_brem_muon - LOG(random())
     END IF
 
   END SUBROUTINE generate_pair

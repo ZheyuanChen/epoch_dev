@@ -285,8 +285,9 @@ CONTAINS
             IF (electron%optical_depth_brem_tri <= 0.0_num) THEN
               CALL generate_pair(electron, el_energy, el_p, &
                   brem_trident_electron_species, brem_trident_positron_species)
-                  electron%optical_depth_brem_tri = &
-                      LOG(1.0_num / (1.0_num - random()))
+              electron%optical_depth_brem_tri = &
+                  electron%optical_depth_brem_tri &
+                  + LOG(1.0_num / (1.0_num - random()))
             END IF
 
             electron => next_electron

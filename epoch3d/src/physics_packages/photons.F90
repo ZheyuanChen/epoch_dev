@@ -586,7 +586,8 @@ CONTAINS
             CALL generate_pair_tri(current, trident_electron_species, &
                 trident_positron_species)
             ! ... and reset optical depth
-            current%optical_depth_tri = reset_optical_depth()
+            current%optical_depth_tri = &
+                current%optical_depth_tri + reset_optical_depth()
           END IF
 #endif
           current => current%next
@@ -1079,8 +1080,9 @@ CONTAINS
       CALL remove_particle_from_partlist(species_list(iphoton)%attached_list, &
           generating_photon)
       DEALLOCATE(generating_photon)
-    ELSE 
-      generating_photon%optical_depth = reset_optical_depth()
+    ELSE
+      generating_photon%optical_depth = &
+          generating_photon%optical_depth + reset_optical_depth()
     END IF
 
   END SUBROUTINE generate_pair
