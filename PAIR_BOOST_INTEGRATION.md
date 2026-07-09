@@ -256,36 +256,34 @@ emission (probability `1 - 1/N`):
 | Additive + subcycling | as additive, plus a loop allowing multiple emissions per timestep | any λ | on average |
 | Poisson | full Poisson sample every timestep | any λ | exact |
 
-Matching this to the actual code:
+Matching this to the actual code **as of 9 July 2026** (commit
+"Use additive optical depths in all boosted pair channels"):
 
-- **Bethe-Heitler**, after the accumulation fix ported in this branch
-  (`92552de6` / `a5716caf`), uses
-  `photon%optical_depth_bremsstrahlung = photon%optical_depth_bremsstrahlung
-  - LOG(random())` on survival — adding onto the existing overshot
-  value. This is the paper's **Additive** method (valid for λ ≲ 1).
-- **Nonlinear Breit-Wheeler** (`photons.F90`, `generate_pair`),
-  **field trident** (`generate_pair_tri`), **nuclear trident**
-  (`brem_trident.F90`), and **muon pair production**
-  (`brem_muon.F90`) never received the equivalent fix: their survival
-  branches call `reset_optical_depth()`, a fresh draw that discards
-  the overshoot. These four channels therefore implement the paper's
-  **Naive** method, which the paper's own Fig. 1(b) shows becoming
-  measurably inaccurate once the per-step decay probability stops
-  being negligible.
-- None of the six channels (LBW included) implement **subcycling** or
-  full **Poisson** sampling, so no channel in this codebase correctly
-  captures more than one emission per parent per timestep — the
-  guidance in §2.5 to keep `N * delta_opdep ≪ 1` is not just a
-  performance tip, it is the paper's stated validity condition for the
-  Additive method, and the *only* thing keeping the four Naive
-  channels close to correct at all.
-
-Porting the same additive-accumulation pattern from Bethe-Heitler to
-the other four channels would bring `boost_pairs`/`boost_muons` to a
-consistent, better-justified Method II across the board; adding a
-subcycling loop would be needed to safely support `boost_pairs` large
-enough that λ approaches or exceeds 1. Neither change is included in
-this integration.
+- **All five boosted channels now implement the Additive method.**
+  Bethe-Heitler received it first via upstream PR #818 (`92552de6`,
+  ported to 1d/2d in `a5716caf`). The remaining four — nonlinear
+  Breit-Wheeler (`photons.F90`, `generate_pair`), field trident
+  (reset after `generate_pair_tri`), nuclear trident
+  (`brem_trident.F90`), and muon pair production (`brem_muon.F90`) —
+  originally used the **Naive** method (a fresh
+  `reset_optical_depth()` draw on survival, discarding the
+  overshoot). They were upgraded to Additive on this branch by
+  carrying the accumulated depth through the survival path, mirroring
+  Chris Arran's own reference implementation on his
+  `opticalDepthUpscaling` fork branch (see §4). For NBW,
+  Bethe-Heitler and the muon channel the survival branch only
+  executes when the boost factor exceeds 1, so unboosted results are
+  bit-identical to upstream; for the two trident channels the parent
+  electron always survives, so the additive reset also applies at
+  `boost_pairs = 1` — a negligible (and strictly more accurate)
+  change, since the discarded overshoot is tiny when the per-step
+  depth decrement is small.
+- No channel (LBW included) implements within-timestep **subcycling**
+  or full **Poisson** sampling. A parent owing more than one
+  conversion in a single step instead catches up over subsequent
+  steps (the additive depth stays below zero and re-fires). The
+  guidance in §2.5 to keep `N * delta_opdep ≲ 1` per step is the
+  paper's stated validity condition for the Additive method.
 
 ---
 
@@ -295,13 +293,82 @@ this integration.
   same commits and are fully integrated, but are opt-in at compile time
   and default-off at runtime; they add nothing to a build without the
   define.
-- **Survival-path optical depth**: see §2.7 — only Bethe-Heitler uses
-  the accumulation ("Additive") fix; nonlinear Breit-Wheeler, field
-  trident, nuclear trident, and the muon channel all still redraw a
-  fresh optical depth ("Naive") on survival, as upstream wrote them.
-  At high `boost_pairs` this under-counts multiple conversions and
-  biases the rate for those four channels, per Arran et al. (2026).
+- **Survival-path optical depth**: see §2.7 — as of 9 July 2026 all
+  boosted channels use the accumulation ("Additive") method. None
+  implement within-timestep subcycling or Poisson sampling, so keep
+  the boosted per-step depth decrement below ~1.
 - **`.vscode/`** remains untracked (editor-local configuration).
 - The custom laser profile injection feature carried over unchanged
   from `upstream-pr-custom-laser-injection`; see
   `DOCUMENTATION_LASER_INJECTION.tex`.
+
+---
+
+## 4. Related forks assessed (9 July 2026)
+
+Two community forks were reviewed for material worth integrating.
+Both are available locally as git remotes `chrisarran` and `holger`.
+
+### 4.1 ChrisArran/epoch — upscaling branches
+
+Chris Arran (first author of the New J. Phys. paper, §2.7) keeps the
+paper's reference implementations on two branches, based on a
+pre-4.20 tree:
+
+- **`ChrisArran-positronRateUpscaling`** (Aug 2024): the paper's
+  **Poisson** method (Method I) — a `random_poisson()` generator, a
+  `qed_update_poisson` main loop, `generate_weighted_pair`, and a
+  Poisson Bethe-Heitler routine, controlled by new deck keys
+  `pair_upscaling` (qed block) and `betheheitler_upscaling`
+  (bremsstrahlung block). ~1300 lines, and dimension-inconsistent:
+  different dimensions were left calling different update loops.
+- **`opticalDepthUpscaling`** (Mar 2025, his latest): four commits on
+  top that implement the **Additive** method for nonlinear
+  Breit-Wheeler in epoch1d only, and — notably — switch epoch1d's
+  main loop *back* from Poisson to the optical-depth method. His
+  final survival-path line,
+  `optical_depth = optical_depth + reset_optical_depth()`, is exactly
+  the pattern of his earlier `patch-1` Bethe-Heitler fix that
+  upstream merged (our `92552de6`).
+
+**What was taken**: the additive survival-path semantics, applied to
+all `boost_pairs`/`boost_muons` channels in all three codes (12 small
+edits; see §2.7). **What was left**: the Poisson machinery and the
+`pair_upscaling`/`betheheitler_upscaling` deck keys — they duplicate
+`boost_pairs` under different names, are dimension-inconsistent
+research code, and their own author moved back to the optical-depth
+approach in his latest work.
+
+The fork also carries unrelated branches (`ChrisArran-chiOutput`,
+`ChrisArran-extendedPhotonEmissionTables`,
+`ChrisArran-photonEnergyExtrapolation`, `ChrisArran-noSpinLight`) not
+assessed in detail here; `ChrisArran-continuousPhotonEmission` is
+already merged upstream and present on this branch.
+
+### 4.2 holgerschmitz/epoch — spin branches
+
+Holger Schmitz's `4.18-spin`, `4.18-spin-dev` and `4.19-spin` (most
+advanced, merged with upstream `4.19-devel`) add classical
+**T-BMT spin precession**:
+
+- a per-particle spin 3-vector behind `#ifdef PARTICLE_SPIN`;
+- precession integrated into the Boris pusher (recomputing the
+  half-step velocity, with a species-level
+  `anomalous_magnetic_moment` deck parameter);
+- species deck keys `spin` (uniform/directed distributions),
+  `spin_x/y/z`; spin components in SDF particle output; a 315-line
+  example/test deck (`spin_precession.deck`); ported to 1d and 3d.
+
+Physics scope is precession only — no Sokolov-Ternov radiative
+polarisation and no spin-dependent QED emission rates, so it does not
+couple to the pair-production machinery above.
+
+**Not integrated**: the package is cleanly `#ifdef`-gated but
+genuinely intrusive — ~800 lines per dimension touching the particle
+pusher hot loop, MPI pack/unpack buffers, particle IO (its dump IDs
+would collide with the 79/80 renumbering from §1 and need
+renumbering), the species deck block, plus a `strings.f90 →
+strings.F90` file rename — all across a 4.19 → 4.20.1 version gap.
+This is a dedicated porting task of similar scale to the pair-boost
+integration itself, recommended as its own branch if spin diagnostics
+become relevant.
