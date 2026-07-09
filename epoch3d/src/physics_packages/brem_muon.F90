@@ -25,7 +25,7 @@
 ! photon energies between 1.5 MeV and 100 GeV.
 
 MODULE brem_muon
-#ifdef BREMSSTRAHLUNG
+#if defined(BREMSSTRAHLUNG) && defined(BREM_MUON)
 
   USE partlist
   USE particles

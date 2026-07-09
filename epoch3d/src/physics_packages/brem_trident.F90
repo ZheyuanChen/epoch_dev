@@ -24,7 +24,7 @@
 ! Martinez, B., et al (2019). Phys. Plasmas, 26(10).
 
 MODULE brem_trident
-#ifdef BREM_TRIDENT
+#if defined(BREMSSTRAHLUNG) && defined(BREM_TRIDENT)
 
   USE partlist
   USE particles

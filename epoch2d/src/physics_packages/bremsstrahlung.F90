@@ -492,11 +492,15 @@ CONTAINS
         CALL init_bethe_heitler(size_brem_array, z_values, z_to_index)
 
     ! Initialise Z-dependent muon pair-production functions using this Z list
+#ifdef BREM_MUON
     IF (use_brem_muon) &
         CALL init_brem_muon(size_brem_array, z_values, z_to_index)
+#endif
 
     ! Initialise tables for the nuclear trident pair production process
+#ifdef BREM_TRIDENT
     IF (use_brem_trident) CALL setup_brem_trident_tables()
+#endif
 
     DEALLOCATE(int_buf)
     DEALLOCATE(real_buf)
@@ -703,8 +707,12 @@ CONTAINS
     END IF
 
     IF (use_bethe_heitler) CALL bethe_heitler_update_depth
+#ifdef BREM_TRIDENT
     IF (use_brem_trident) CALL brem_trident_update_depth
+#endif
+#ifdef BREM_MUON
     IF (use_brem_muon) CALL brem_muon_update_depth
+#endif
 
   END SUBROUTINE bremsstrahlung_update_optical_depth
 

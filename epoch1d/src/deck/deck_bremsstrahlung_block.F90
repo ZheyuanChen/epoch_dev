@@ -72,6 +72,38 @@ CONTAINS
     END IF
 
     IF (use_bremsstrahlung) need_random_state = .TRUE.
+
+#ifndef BREM_TRIDENT
+    IF (use_brem_trident) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'Unable to set "use_brem_trident=T" in the ', &
+              '"bremsstrahlung" block.'
+          WRITE(io,*) 'Please recompile with the -DBREM_TRIDENT ', &
+              'preprocessor flag.'
+        END DO
+      END IF
+      CALL abort_code(c_err_pp_options_missing)
+    END IF
+#endif
+
+#ifndef BREM_MUON
+    IF (use_brem_muon) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'Unable to set "use_brem_muon=T" in the ', &
+              '"bremsstrahlung" block.'
+          WRITE(io,*) 'Please recompile with the -DBREM_MUON ', &
+              'preprocessor flag.'
+        END DO
+      END IF
+      CALL abort_code(c_err_pp_options_missing)
+    END IF
+#endif
 #else
     IF (use_bremsstrahlung) THEN
       IF (rank == 0) THEN
