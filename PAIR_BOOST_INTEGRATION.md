@@ -38,6 +38,7 @@ Two follow-up commits of our own:
 |---|---|
 | `a5716caf` | Port the optical-depth accumulation fix (`92552de6`, upstream PR #818) to epoch1d and epoch2d, which upstream had only applied to epoch3d |
 | `70c373bc` | Guard the `identify:muon` / `identify:antimuon` handlers in `deck_species_block.F90` with `#ifdef BREMSSTRAHLUNG`: they referenced species variables that only exist under that define, breaking any build without it. Upstream never noticed because their Makefile force-enables the define. |
+| `6c9272de` | Fix mixed-define builds: `brem_muon.F90` (and `brem_trident.F90`) guarded their whole body with a broader define than their own per-particle field, so e.g. `-DBREMSSTRAHLUNG -DBREM_TRIDENT` without `-DBREM_MUON` failed to compile, and a `-DBREMSSTRAHLUNG`-only build failed to link the unguarded calls in `bremsstrahlung.F90`. Module guards now match the field guards, call sites are `#ifdef`-guarded, and setting `use_brem_trident`/`use_brem_muon` in a deck without the matching define now aborts with a clear message instead of silently doing nothing. |
 
 ### Conflict resolutions and deviations from upstream
 
@@ -139,7 +140,11 @@ make COMPILER=gfortran DEFINE="-DPHOTONS -DTRIDENT_PHOTONS \
 | `BREM_MUON` | Bethe-Heitler muon pairs (needs `BREMSSTRAHLUNG`) |
 
 `BREM_TRIDENT`/`BREM_MUON` each add one optical-depth REAL per
-particle, so leave them out of builds that do not use them.
+particle, so leave them out of builds that do not use them. Any
+combination of the three bremsstrahlung-family defines builds
+correctly; setting `use_brem_trident` or `use_brem_muon` in a deck
+without the matching define aborts at deck parse with a message
+naming the missing flag.
 
 ### 2.4 Deck configuration
 
