@@ -49,18 +49,24 @@ CONTAINS
 
 
   ! Entry point called from attach_laser for every laser at deck-parse
-  ! time (allow_defer = .TRUE.), and again from
-  ! finalize_custom_laser_domain once the domain has settled
-  ! (allow_defer absent, i.e. .FALSE.). Dispatches to the spatiotemporal
-  ! or static spatial loader; both read raw binary files (see
-  ! load_binary_file). Loading happens at deck-parse time so that the
-  ! MPI_BCAST calls run when ALL ranks participate, avoiding the deadlock
-  ! that occurs if loading is deferred to the per-boundary-cell
-  ! timestepping loop -- EXCEPT that a spatiotemporal load is itself
-  ! deferred past deck-parse time whenever use_pre_balance might still
-  ! move the domain (see local_slab_window), since loading the
-  ! (potentially huge) file immediately would force it to be stored in
-  ! full on every rank, and loading it twice would be wasteful.
+  ! time (allow_defer = .TRUE.), again from finalize_custom_laser_domain
+  ! once the startup domain has settled, and again from
+  ! reslab_custom_laser_files after every subsequent redistribution
+  ! under use_balance (allow_defer absent, i.e. .FALSE., in both
+  ! latter cases). Dispatches to the spatiotemporal or static spatial
+  ! loader; both read raw binary files (see load_binary_file). Loading
+  ! happens at deck-parse time so that the MPI_BCAST calls run when ALL
+  ! ranks participate, avoiding the deadlock that occurs if loading is
+  ! deferred to the per-boundary-cell timestepping loop -- EXCEPT that a
+  ! spatiotemporal load is itself deferred past deck-parse time whenever
+  ! use_pre_balance or use_balance might still move the domain (see
+  ! local_slab_window), since loading the (potentially huge) file
+  ! immediately would force it to be stored in full on every rank, and
+  ! loading it twice would be wasteful. use_balance keeps the domain
+  ! moving for the entire run, so this alone would not settle -- but
+  ! reslab_custom_laser_files re-enters this routine after every real
+  ! redistribution, so deferring the first load still buys the same
+  ! saving as the use_pre_balance case, just repeated rather than final.
   SUBROUTINE custom_laser_spatial_setup(laser, allow_defer)
 
     TYPE(laser_block), INTENT(INOUT) :: laser
@@ -73,11 +79,8 @@ CONTAINS
     defer_ok = .FALSE.
     IF (PRESENT(allow_defer)) defer_ok = allow_defer
 
-    ! use_balance keeps the domain moving for the entire run, so
-    ! deferring buys nothing there; only the one-off use_pre_balance
-    ! startup settle is worth waiting for.
-    IF (defer_ok .AND. laser%use_spatiotemporal .AND. use_pre_balance &
-        .AND. .NOT. use_balance) RETURN
+    IF (defer_ok .AND. laser%use_spatiotemporal &
+        .AND. (use_pre_balance .OR. use_balance)) RETURN
 
     IF (laser%use_spatiotemporal) THEN
       IF (LEN_TRIM(laser%profile_data_file) > 0) THEN
@@ -205,16 +208,20 @@ CONTAINS
   ! than the full plane on every rank. Ranks that do not own the laser's
   ! boundary face never sample it at all and store an empty slab. When
   ! the local patch can change after this is computed, fall back to the
-  ! full plane: dynamic load balancing (use_balance, for the whole run),
-  ! a moving window shifting x for a y/z-boundary laser, or the one-off
-  ! startup load balance (use_pre_balance, which defaults to .TRUE.,
-  ! confirmed to redistribute domain ownership between ranks whenever
-  ! particle load is uneven) -- but only until it has actually run:
+  ! full plane: a moving window shifting x for a y/z-boundary laser, or
+  ! -- until the domain has settled at least once -- the startup load
+  ! balance (use_pre_balance, which defaults to .TRUE.) or continuous
+  ! dynamic balancing (use_balance), both confirmed to redistribute
+  ! domain ownership between ranks whenever particle load is uneven.
   ! custom_laser_spatial_setup defers a spatiotemporal load past
-  ! deck-parse time whenever use_pre_balance applies, so this routine is
-  ! not called for such a laser until startup_balance_done is set by
+  ! deck-parse time whenever either flag applies, so this routine is not
+  ! called for such a laser until startup_balance_done is set by
   ! finalize_custom_laser_domain, at which point the windowed slab is
-  ! safe to use even though use_pre_balance is (permanently) .TRUE..
+  ! safe to use for the first time. use_balance keeps the domain moving
+  ! for the rest of the run, but does not need the full-plane fallback
+  ! after that: reslab_custom_laser_files re-derives this window and
+  ! reloads the slab every time balance_workload actually redistributes
+  ! the domain, so a once-correct window stays correct.
   SUBROUTINE local_slab_window(laser, i1_lo, i1_hi, i2_lo, i2_hi)
 
     TYPE(laser_block), INTENT(IN) :: laser
@@ -234,7 +241,7 @@ CONTAINS
 
     x_is_transverse = laser%boundary /= c_bd_x_min &
         .AND. laser%boundary /= c_bd_x_max
-    IF (use_balance .OR. (use_pre_balance .AND. .NOT. startup_balance_done) &
+    IF (((use_balance .OR. use_pre_balance) .AND. .NOT. startup_balance_done) &
         .OR. (move_window .AND. x_is_transverse)) THEN
       i1_lo = 1
       i1_hi = laser%n_tr1_points
@@ -289,17 +296,18 @@ CONTAINS
 
   ! Called once from epoch3d.F90, after the one-off startup load balance
   ! (pre_load_balance and the particle-count-triggered balance_workload)
-  ! has run and the domain decomposition is settled for the rest of the
-  ! run (barring use_balance, which local_slab_window watches for
-  ! separately). custom_laser_spatial_setup defers a spatiotemporal
-  ! laser's file load past deck-parse time whenever use_pre_balance might
-  ! still move the domain, rather than loading the (potentially huge)
-  ! file immediately and forcing local_slab_window to store it in full on
-  ! every rank. This performs those deferred loads now, against the final
-  ! domain, so the true per-rank window can be used instead. A no-op for
-  ! every other laser: no custom profile, the static spatial path (never
-  ! deferred), or already loaded eagerly at deck-parse time (use_balance,
-  ! or use_pre_balance = F).
+  ! has run and the domain decomposition is settled for the first time
+  ! (use_balance may move it again later -- see reslab_custom_laser_files
+  ! for how that stays tracked). custom_laser_spatial_setup defers a
+  ! spatiotemporal laser's file load past deck-parse time whenever
+  ! use_pre_balance or use_balance might still move the domain, rather
+  ! than loading the (potentially huge) file immediately and forcing
+  ! local_slab_window to store it in full on every rank. This performs
+  ! those deferred loads now, against the settled domain, so the true
+  ! per-rank window can be used instead. A no-op for every other laser:
+  ! no custom profile, the static spatial path (never deferred), or
+  ! already loaded eagerly at deck-parse time (use_pre_balance = F and
+  ! use_balance = F).
   SUBROUTINE finalize_custom_laser_domain
 
     TYPE(laser_block), POINTER :: laser
@@ -316,6 +324,47 @@ CONTAINS
     END DO
 
   END SUBROUTINE finalize_custom_laser_domain
+
+
+
+  ! Called from balance_workload (balance.F90) immediately after
+  ! redistribute_domain, only when use_redistribute_domain was true for
+  ! this step -- i.e. every rank enters this together, since that flag
+  ! is derived identically on all ranks from the MPI_ALLREDUCE'd balance
+  ! fraction a few lines above the call. use_balance keeps the domain
+  ! moving for the life of the run, which stops the deferred-until-settle
+  ! trick finalize_custom_laser_domain relies on from ever settling for
+  ! good; this is the alternative for that case: instead of waiting for
+  ! the domain to stop moving, re-derive the per-rank window and reload
+  ! the slab every time it actually does move. Every rank participates
+  ! in the reload unconditionally, even if its own window turns out
+  ! unchanged, since load_spatiotemporal_file's MPI_BCAST calls require
+  ! symmetric participation and a per-rank skip would need its own
+  ! consensus check to stay deadlock-safe -- not worth it given real
+  ! redistributions are already throttled by dlb_threshold and friends.
+  ! A no-op for every laser not already carrying a per-rank slab (no
+  ! custom profile, static spatial, or use_pre_balance = F and
+  ! use_balance = F, none of which this reload applies to).
+  SUBROUTINE reslab_custom_laser_files
+
+    TYPE(laser_block), POINTER :: laser
+
+    laser => lasers
+    DO WHILE (ASSOCIATED(laser))
+      IF (laser%use_custom_profile .AND. laser%use_spatiotemporal &
+          .AND. laser%profile_loaded) THEN
+        DEALLOCATE(laser%file_field_matrix)
+        laser%profile_loaded = .FALSE.
+        IF (laser%phase_loaded) THEN
+          DEALLOCATE(laser%file_phase_matrix)
+          laser%phase_loaded = .FALSE.
+        END IF
+        CALL custom_laser_spatial_setup(laser)
+      END IF
+      laser => laser%next
+    END DO
+
+  END SUBROUTINE reslab_custom_laser_files
 
 
 

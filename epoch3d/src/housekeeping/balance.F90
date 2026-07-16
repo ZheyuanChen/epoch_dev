@@ -263,6 +263,14 @@ CONTAINS
       old_comm = comm
       old_coordinates(:) = coordinates(:)
       CALL redistribute_domain
+
+      ! x/y/z now reflect the new domain (set by redistribute_domain's
+      ! own setup_grid_x/y/z calls above). use_redistribute_domain is
+      ! derived identically on every rank a few lines above (from
+      ! MPI_ALLREDUCE'd balance_frac), so every rank enters this
+      ! together. A no-op until the first spatiotemporal custom-laser
+      ! load has actually happened (see reslab_custom_laser_files).
+      CALL reslab_custom_laser_files
     END IF
 
     IF (ALLOCATED(new_cell_x_min)) THEN
