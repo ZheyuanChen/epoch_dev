@@ -560,8 +560,11 @@ CONTAINS
     jy = 0.0_num
     jz = 0.0_num
 
-    ! Set up random number seed
-    seed = 7842432
+    ! Set up random number seed. Deterministic default (random_seed_base,
+    ! Gate 6 patch, 20 July 2026): per-rank seed = random_seed_base + rank.
+    ! use_random_seed=T overrides with a clock-derived base (control block
+    ! rejects the combination of both being set, see control_block_check).
+    seed = random_seed_base
     IF (use_random_seed) CALL SYSTEM_CLOCK(seed)
     seed = seed + rank
 

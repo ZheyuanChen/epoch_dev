@@ -530,6 +530,12 @@ MODULE shared_data
 
   LOGICAL :: neutral_background = .TRUE.
   LOGICAL :: use_random_seed = .FALSE.
+  ! Explicit deterministic base seed (Gate 6, 20 July 2026). Per-rank seed is
+  ! random_seed_base + rank when use_random_seed=F. Default matches the
+  ! literal that set_initial_values used unconditionally before this change,
+  ! so decks omitting this key reproduce the prior default behaviour exactly.
+  INTEGER :: random_seed_base = 7842432
+  LOGICAL :: random_seed_base_set = .FALSE.
   LOGICAL :: use_particle_lists = .FALSE.
   LOGICAL :: use_particle_count_update = .FALSE.
   LOGICAL :: use_accurate_n_zeros = .FALSE.

@@ -67,6 +67,8 @@ CONTAINS
     dlb_threshold = -1.0_num
     nx_global = -1
     ny_global = -1
+    random_seed_base = 7842432
+    random_seed_base_set = .FALSE.
     particle_push_start_time = 0.0_num
     particle_migration_interval = 1
     maxwell_solver = c_maxwell_solver_yee
@@ -340,6 +342,10 @@ CONTAINS
     ELSE IF (str_cmp(element, 'use_random_seed')) THEN
       use_random_seed = as_logical_print(value, element, errcode)
 
+    ELSE IF (str_cmp(element, 'random_seed_base')) THEN
+      random_seed_base = as_integer_print(value, element, errcode)
+      random_seed_base_set = .TRUE.
+
     ELSE IF (str_cmp(element, 'smooth_currents')) THEN
       smooth_currents = as_logical_print(value, element, errcode)
 
@@ -571,6 +577,36 @@ CONTAINS
 
     IF (field_order == 2 .AND. maxwell_solver == c_maxwell_solver_cowan) THEN
       maxwell_solver = c_maxwell_solver_yee
+    END IF
+
+    IF (random_seed_base_set .AND. use_random_seed) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'Both "random_seed_base" and "use_random_seed=T" were', &
+              ' given. These are mutually exclusive: random_seed_base', &
+              ' requests a deterministic base seed, use_random_seed=T', &
+              ' requests a clock-derived one. Remove one of these', &
+              ' settings from the input deck.'
+        END DO
+      END IF
+      errcode = c_err_bad_value
+    END IF
+
+    IF (rank == 0) THEN
+      DO iu = 1, nio_units ! Print to stdout and to file
+        io = io_units(iu)
+        IF (use_random_seed) THEN
+          WRITE(io,*) 'Random seed: clock-derived (use_random_seed=T),', &
+              ' per-rank seed = SYSTEM_CLOCK value + rank'
+        ELSE
+          WRITE(io,'(A,I0,A)') ' Random seed: deterministic, ' &
+              // 'random_seed_base = ', random_seed_base, &
+              ', per-rank seed = random_seed_base + rank'
+        END IF
+      END DO
     END IF
 
   END FUNCTION control_block_check
