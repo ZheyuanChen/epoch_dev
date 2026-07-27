@@ -213,6 +213,25 @@ DEFINES += $(D)PARTICLE_SHAPE_BSPLINE3
 
 # Include a unique global particle ID. The first flag defines the ID using
 # an 8-byte integer, the second uses 4-bytes.
+# Enabled 17 July 2026 (user decision, additive data-retention request):
+# needed so Photon_Probe/Electron_Probe output can carry particle IDs for
+# cross-snapshot crossing reconstruction. 8-byte chosen over PARTICLE_ID4 to
+# avoid ID-space overflow risk (this campaign already uses 1e6 macro-
+# particles per run and NLCS/NBW photon/pair production adds more).
+# DISABLED 18 July 2026 (user decision): found and root-caused a real,
+# reproducible MPI deadlock in generate_particle_ids() (partlist.F90:945,
+# a blocking MPI_ALLREDUCE gated by a per-species/per-rank condition,
+# potentially non-uniform across ranks) -- confirmed via 4 independent
+# jobs (2 Gate-5 deck variants, the fresh nominal deck, and the plain
+# original baseline deck, on 4 different nodes) all freezing at the exact
+# same simulation iteration (3100) once running through this
+# PARTICLE_ID-enabled binary. With Blackburn retired, exact per-particle
+# ID-based crossing dedup is no longer essential -- weight-sum-based
+# electron completeness accounting (already in analyse_blackburn.py,
+# no PARTICLE_ID dependency) covers Gate 5's actual requirement. See
+# EXECUTION_STATE.md's "PARTICLE_ID MPI deadlock" section for the full
+# writeup. Left disabled pending the user's own local debugging -- not
+# this session's job to fix the Fortran source.
 #DEFINES += $(D)PARTICLE_ID
 #DEFINES += $(D)PARTICLE_ID4
 
@@ -220,13 +239,23 @@ DEFINES += $(D)PARTICLE_SHAPE_BSPLINE3
 DEFINES += $(D)PHOTONS
 
 # Use the Trident process for pair production
-DEFINES += $(D)TRIDENT_PHOTONS
+# Disabled 17 July 2026 (user decision): at this campaign's intensity,
+# Trident is a subdominant vacuum pair-production channel not needed
+# alongside NLCS/NBW. This tree (epoch_dev_nlcs_nbw) is deliberately
+# separate from ~/epoch_dev, which the linear_breit_wheeler campaign
+# still requires built with TRIDENT_PHOTONS/BREMSSTRAHLUNG.
+#DEFINES += $(D)TRIDENT_PHOTONS
 
 # Include bremsstrahlung routines
-DEFINES += $(D)BREMSSTRAHLUNG
+# Disabled 17 July 2026 (user decision, grouped with Bethe-Heitler below):
+# no ion/solid species exist in this campaign's decks for bremsstrahlung
+# to act on, and BREM_TRIDENT (Bethe-Heitler) is a submodule of this flag.
+#DEFINES += $(D)BREMSSTRAHLUNG
 
-# Include trident pair production in nuclear fields
-DEFINES += $(D)BREM_TRIDENT
+# Include trident pair production in nuclear fields (= Bethe-Heitler pair
+# production). Disabled 17 July 2026 (user decision): not needed alongside
+# NLCS/NBW at this campaign's intensity.
+#DEFINES += $(D)BREM_TRIDENT
 
 # Include muon pair production
 #DEFINES += $(D)BREM_MUON
