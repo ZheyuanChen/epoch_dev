@@ -379,16 +379,18 @@ Matches the strategy above exactly, in `custom_laser.f90`:
 
 ## 9. Still outstanding
 
-- Debug instrumentation was temporary and has been removed; the
-  windows-changing-at-step-17 evidence lives only in this report and
-  the (uncommitted) working-tree diff, not in a permanent test. Worth
-  turning the 2-rank repro deck into a permanent regression test
-  alongside the existing `epoch3d_verification/test*` suite before this
-  lands, given how easy it would be for a future change to silently
-  reintroduce the full-plane fallback without any test noticing (unlike
-  a stale-window abort, which the existing tests would catch, a
-  reversion to full-plane is a memory regression, not a correctness
-  one, and correctness-only tests are blind to it).
+- ~~Debug instrumentation was temporary and has been removed~~ —
+  **done**: `load_spatiotemporal_file` now carries a permanent,
+  load-time-only print of the per-rank slab bounds (fires once per
+  load/reslab event, never per timestep), and a permanent regression
+  test, `epoch3d_verification/test8_dynamic_balance_reslab`
+  (Project_EPOCH), parses it to assert the window stays narrower than
+  the full plane and actually changes across a reslab event. Checked
+  to discriminate: fails against a reverted `local_slab_window`
+  condition (every window reports full-plane), passes against the
+  current one. This closes the exact gap this section flagged — a
+  future silent reversion to full-plane is now a caught memory
+  regression, not a blind spot.
 - `move_window` (moving injection window on a transverse-boundary laser
   under a y/z-boundary configuration) still forces the full-plane
   fallback unconditionally — out of scope here, see §5.
