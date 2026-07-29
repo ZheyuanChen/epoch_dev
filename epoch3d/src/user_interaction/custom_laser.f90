@@ -426,6 +426,14 @@ CONTAINS
     CALL local_slab_window(laser, i1_lo, i1_hi, i2_lo, i2_hi)
     ALLOCATE(matrix(i1_lo:i1_hi, i2_lo:i2_hi, laser%n_t_points))
 
+    ! Permanent, load-time-only diagnostic (cheap: fires once per load or
+    ! reslab_custom_laser_files reload, never per timestep) so a memory
+    ! regression -- the window silently reverting to the full [1,n1]x[1,n2]
+    ! plane -- is visible in the log rather than requiring a debugger.
+    PRINT *, 'Custom laser slab window: rank =', rank, ' phase =', &
+        load_phase, ' i1 =', i1_lo, i1_hi, ' i2 =', i2_lo, i2_hi, &
+        ' of =', n1, n2
+
     ALLOCATE(slice(n1, n2))
     DO it = 1, laser%n_t_points
       IF (rank == 0) READ(custom_laser_lu) slice
