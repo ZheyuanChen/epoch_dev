@@ -479,12 +479,21 @@ built in from the start.)
     against the settled domain instead of being sized too early.
     Per-rank cost is then roughly $(\text{local patch fraction}) \times
     n_{\mathrm{tr1}} \times n_{\mathrm{tr2}} \times n_t \times 8$ bytes.
-    The full plane is still stored on every rank when the domain cannot
-    be considered static: \texttt{use\_balance = T} (dynamic load
-    balancing keeps redistributing cells for the whole run) or a moving
-    window on a \texttt{y}/\texttt{z}-boundary laser (its tr1 axis is
-    $x$, which the window shifts). In \textbf{2D} the (small) full array
-    is always broadcast to every rank.
+    Continuous dynamic load balancing (\texttt{use\_balance = T}) keeps
+    the same per-rank saving for the whole run rather than only until
+    the first rebalance: the window is re-derived and the file reloaded
+    after every genuine mid-run redistribution, at the same per-event
+    cost as the initial load.
+
+    The full plane is still stored on every rank, unconditionally, for
+    a \emph{moving injection window} on a \texttt{y}/\texttt{z}-boundary
+    laser (its tr1 axis is $x$, which the window shifts as the
+    simulation window moves). This is deliberately retained rather than
+    windowed: unlike domain rebalancing, the window's motion is not
+    tied to a discrete, all-ranks-agree event such an update could hook
+    into, so a safe local-slab alternative does not exist yet for this
+    case. In \textbf{2D} the (small) full array is always broadcast to
+    every rank.
 \end{itemize}
 
 \end{document}
