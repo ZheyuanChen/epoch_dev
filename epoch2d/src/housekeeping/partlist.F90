@@ -27,6 +27,25 @@ MODULE partlist
 
   INTEGER :: nvar
 
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+  ! Deadlock-diagnosis instrumentation: tags the call site immediately
+  ! before each CALL generate_particle_ids(...), so a per-rank trace log
+  ! can pinpoint a call-count mismatch across ranks (root cause of an
+  ! observed MPI_ALLREDUCE hang). Confined entirely to this ifdef.
+  INTEGER :: gpi_call_site = 0
+  INTEGER :: gpi_trace_unit = -1
+  INTEGER, PARAMETER :: c_gpi_particles_push = 1
+  INTEGER, PARAMETER :: c_gpi_particles_photon_push = 2
+  INTEGER, PARAMETER :: c_gpi_probes8 = 3
+  INTEGER, PARAMETER :: c_gpi_probes4 = 4
+  INTEGER, PARAMETER :: c_gpi_iter_i4_start = 5
+  INTEGER, PARAMETER :: c_gpi_iter_i4_advance = 6
+  INTEGER, PARAMETER :: c_gpi_iter_i8_start = 7
+  INTEGER, PARAMETER :: c_gpi_iter_i8_advance = 8
+  INTEGER, PARAMETER :: c_gpi_species_subset = 9
+  INTEGER, PARAMETER :: c_gpi_persistent_subset = 10
+#endif
+
   TYPE pointer_item
     TYPE(particle), POINTER :: part
     TYPE(pointer_item), POINTER :: next
@@ -952,6 +971,20 @@ CONTAINS
     TYPE(particle), POINTER :: current
     TYPE(pointer_list) :: idlist
     TYPE(pointer_item), POINTER :: idcurrent, idnext
+    CHARACTER(LEN=12) :: gpi_rank_str
+
+    ! Deadlock-diagnosis trace: write before the collective below, so a
+    ! hung run still leaves each rank's last call site on disk.
+    IF (gpi_trace_unit < 0) THEN
+      gpi_trace_unit = 43
+      WRITE(gpi_rank_str, '(i0)') rank
+      OPEN(UNIT=gpi_trace_unit, STATUS='REPLACE', ACTION='WRITE', &
+          FILE='particle_id_trace.' // TRIM(gpi_rank_str))
+    END IF
+    WRITE(gpi_trace_unit, '(''step='',i8,'' site='',i2,'' id_update='',i8, &
+        &'' count='',i12)') step, gpi_call_site, partlist%id_update, &
+        partlist%count
+    FLUSH(gpi_trace_unit)
 
     id_update = partlist%id_update
 

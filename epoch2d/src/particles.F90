@@ -230,8 +230,9 @@ CONTAINS
 #ifndef NO_PARTICLE_PROBES
       current_probe => species_list(ispecies)%attached_probes
       probes_for_species = ASSOCIATED(current_probe)
-#if defined(PARTICLE_ID) || defined(PARTICLE_ID4) 
-      IF (probes_for_species) THEN 
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+      IF (probes_for_species) THEN
+        gpi_call_site = c_gpi_particles_push
         CALL generate_particle_ids(species_list(ispecies)%attached_list)
         current => species_list(ispecies)%attached_list%head
       END IF
@@ -763,8 +764,9 @@ CONTAINS
 #ifndef NO_PARTICLE_PROBES
     current_probe => species_list(ispecies)%attached_probes
     probes_for_species = ASSOCIATED(current_probe)
-#if defined(PARTICLE_ID) || defined(PARTICLE_ID4) 
-    IF (probes_for_species) THEN 
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+    IF (probes_for_species) THEN
+      gpi_call_site = c_gpi_particles_photon_push
       CALL generate_particle_ids(species_list(ispecies)%attached_list)
     END IF
 #endif

@@ -420,6 +420,7 @@ CONTAINS
       CALL start_particle_list(current_species, current_list, cur)
 #if defined(PARTICLE_ID4)
       IF (param == c_dump_part_id) THEN
+        gpi_call_site = c_gpi_iter_i4_start
         CALL generate_particle_ids(current_list)
       END IF
 #endif
@@ -459,6 +460,7 @@ CONTAINS
         CALL advance_particle_list(current_list, cur)
 #if defined(PARTICLE_ID4)
         IF (param == c_dump_part_id .AND. ASSOCIATED(current_list)) THEN
+          gpi_call_site = c_gpi_iter_i4_advance
           CALL generate_particle_ids(current_list)
         END IF
 #endif
@@ -486,6 +488,9 @@ CONTAINS
 
     IF (start)  THEN
       CALL start_particle_list(current_species, current_list, cur)
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+      gpi_call_site = c_gpi_iter_i8_start
+#endif
       CALL generate_particle_ids(current_list)
     END IF
 
@@ -513,6 +518,9 @@ CONTAINS
       IF (.NOT. ASSOCIATED(cur)) THEN
         CALL advance_particle_list(current_list, cur)
         IF (ASSOCIATED(current_list)) THEN
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+          gpi_call_site = c_gpi_iter_i8_advance
+#endif
           CALL generate_particle_ids(current_list)
         END IF
       END IF

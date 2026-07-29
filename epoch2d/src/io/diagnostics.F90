@@ -2442,7 +2442,8 @@ CONTAINS
 
     ! Update particle ID values if using
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
-    DO i = 1, n_species 
+    DO i = 1, n_species
+      gpi_call_site = c_gpi_species_subset
       CALL generate_particle_ids(species_list(i)%attached_list)
     END DO
 #endif
@@ -2537,6 +2538,9 @@ CONTAINS
         IF (.NOT. sub%use_species(ispec)) THEN
           CYCLE
         END IF
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+        gpi_call_site = c_gpi_persistent_subset
+#endif
         CALL generate_particle_ids(species_list(ispec)%attached_list)
 
         part_mc = c * species_list(ispec)%mass
