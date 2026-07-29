@@ -570,8 +570,18 @@ CONTAINS
           ENDIF
 
 #ifdef TRIDENT_PHOTONS
-          current%optical_depth_tri = current%optical_depth_tri &
-              - delta_optical_depth_tri(eta, gamma_rel)
+          ! Trident pair production is part of produce_pairs, exactly
+          ! like the Breit-Wheeler photon branch below -- skip it
+          ! entirely when produce_pairs = F, matching
+          ! check_qed_variables, which already skips assigning default
+          ! trident_electron_species/trident_positron_species in that
+          ! case. Without this guard those stay at their unset -1
+          ! default and generate_pair_tri segfaults on
+          ! species_list(-1).
+          IF (produce_pairs) THEN
+            current%optical_depth_tri = current%optical_depth_tri &
+                - delta_optical_depth_tri(eta, gamma_rel)
+          END IF
 #endif
           ! If optical depth dropped below zero generate photon...
           IF (current%optical_depth < 0.0_num) THEN
@@ -581,7 +591,7 @@ CONTAINS
           END IF
 
 #ifdef TRIDENT_PHOTONS
-          IF (current%optical_depth_tri < 0.0_num) THEN
+          IF (produce_pairs .AND. current%optical_depth_tri < 0.0_num) THEN
             CALL generate_pair_tri(current, trident_electron_species, &
                 trident_positron_species)
             ! ... and reset optical depth
