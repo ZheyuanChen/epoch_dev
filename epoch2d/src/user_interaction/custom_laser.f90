@@ -170,6 +170,76 @@ CONTAINS
 
 
 
+  ! Generic allocate-and-load for a 2D spatiotemporal matrix (n1 x n2,
+  ! first axis fastest-varying) from a raw binary file, via load_binary_file.
+  ! Shared by the boundary-laser profile/phase loaders below and by the
+  ! interior laser-antenna module (laser_antenna.f90), so the file-format
+  ! convention only needs to be right in one place.
+  SUBROUTINE load_spatiotemporal_matrix(filename, n1, n2, matrix)
+
+    CHARACTER(LEN=*), INTENT(IN) :: filename
+    INTEGER, INTENT(IN) :: n1, n2
+    REAL(num), DIMENSION(:,:), POINTER :: matrix
+
+    ALLOCATE(matrix(n1, n2))
+    CALL load_binary_file(filename, matrix, n1 * n2)
+
+  END SUBROUTINE load_spatiotemporal_matrix
+
+
+
+  ! Generic bilinear interpolation of a 2D spatiotemporal matrix (as loaded
+  ! by load_spatiotemporal_matrix) at transverse position 'pos' and sample
+  ! time 't_sample', given the deck-declared uniform grid bounds/counts.
+  ! Returns 0 outside the declared grid in either axis. Shared by
+  ! custom_laser_profile/custom_laser_phase below and by laser_antenna.f90
+  ! -- 't_sample' is passed explicitly (not read from the module 'time'
+  ! variable) so callers that need a specific half-step time (rather than
+  ! the ambient one) can supply it directly.
+  REAL(num) FUNCTION sample_spatiotemporal_matrix(matrix, pos, t_sample, &
+      pos_min, pos_max, n_pos, t_start, t_end, n_t)
+
+    REAL(num), DIMENSION(:,:), INTENT(IN) :: matrix
+    REAL(num), INTENT(IN) :: pos, t_sample, pos_min, pos_max
+    REAL(num), INTENT(IN) :: t_start, t_end
+    INTEGER, INTENT(IN) :: n_pos, n_t
+    INTEGER :: idx_pos, idx_t
+    REAL(num) :: dpos, dt, pos0, t0, u, v, q11, q12, q21, q22
+
+    sample_spatiotemporal_matrix = 0.0_num
+
+    IF (pos < pos_min .OR. pos > pos_max) RETURN
+    IF (t_sample < t_start .OR. t_sample > t_end) RETURN
+
+    dpos = (pos_max - pos_min) / REAL(n_pos - 1, num)
+    dt = (t_end - t_start) / REAL(n_t - 1, num)
+
+    idx_pos = INT((pos - pos_min) / dpos) + 1
+    idx_t = INT((t_sample - t_start) / dt) + 1
+
+    ! Clamp to valid interpolation range [1, n-1]
+    idx_pos = MAX(1, MIN(idx_pos, n_pos - 1))
+    idx_t = MAX(1, MIN(idx_t, n_t - 1))
+
+    pos0 = pos_min + REAL(idx_pos - 1, num) * dpos
+    t0 = t_start + REAL(idx_t - 1, num) * dt
+    u = (pos - pos0) / dpos
+    v = (t_sample - t0) / dt
+
+    q11 = matrix(idx_pos,   idx_t)      ! Bottom-Left
+    q21 = matrix(idx_pos+1, idx_t)      ! Top-Left
+    q12 = matrix(idx_pos,   idx_t+1)    ! Bottom-Right
+    q22 = matrix(idx_pos+1, idx_t+1)    ! Top-Right
+
+    sample_spatiotemporal_matrix = (1.0_num - u) * (1.0_num - v) * q11 &
+                                 + u * (1.0_num - v) * q21             &
+                                 + (1.0_num - u) * v * q12             &
+                                 + u * v * q22
+
+  END FUNCTION sample_spatiotemporal_matrix
+
+
+
   ! Load a 2D spatiotemporal amplitude profile from a raw binary file into
   ! the given laser block: access='stream', no embedded header, column-major
   ! (transverse axis fastest-varying), n_transverse_points * n_t_points
@@ -184,11 +254,8 @@ CONTAINS
 
     CALL check_file_grid_declared(laser, .TRUE.)
 
-    ALLOCATE(laser%file_field_matrix(laser%n_transverse_points, &
-        laser%n_t_points))
-
-    CALL load_binary_file(profile_filename, laser%file_field_matrix, &
-        laser%n_transverse_points * laser%n_t_points)
+    CALL load_spatiotemporal_matrix(profile_filename, &
+        laser%n_transverse_points, laser%n_t_points, laser%file_field_matrix)
 
     laser%profile_loaded = .TRUE.
 
@@ -218,11 +285,8 @@ CONTAINS
 
     CALL check_file_grid_declared(laser, .TRUE.)
 
-    ALLOCATE(laser%file_phase_matrix(laser%n_transverse_points, &
-        laser%n_t_points))
-
-    CALL load_binary_file(phase_filename, laser%file_phase_matrix, &
-        laser%n_transverse_points * laser%n_t_points)
+    CALL load_spatiotemporal_matrix(phase_filename, &
+        laser%n_transverse_points, laser%n_t_points, laser%file_phase_matrix)
 
     laser%phase_loaded = .TRUE.
 
@@ -363,8 +427,6 @@ CONTAINS
   REAL(num) FUNCTION custom_laser_profile(laser, pos)
     TYPE(laser_block), INTENT(INOUT) :: laser
     REAL(num), INTENT(IN) :: pos
-    INTEGER :: idx_pos, idx_t
-    REAL(num) :: dy, dt, pos0, t0, u, v, q11, q12, q21, q22
     CHARACTER(LEN=c_max_path_length) :: fname
 
     ! Ensure this laser's 2D profile data is loaded into memory on first
@@ -379,47 +441,11 @@ CONTAINS
       CALL load_temporal_spatial_profile(laser, fname)
     END IF
 
-    ! Default return value if coordinates fall completely outside the
-    ! deck-declared grid.
-    custom_laser_profile = 0.0_num
-
-    ! --- 1. Boundary & Guard Checks ---
-    IF (pos < laser%profile_transverse_min &
-        .OR. pos > laser%profile_transverse_max) RETURN
-    IF (time < laser%t_start .OR. time > laser%t_end) RETURN
-
-    ! --- 2. Locate the Bounding Cell Box ---
-    ! The grid is uniform by construction (deck-declared bounds/counts), so
-    ! the cell spacing and bounding indices are computed directly -- no
-    ! stored coordinate array to search.
-    dy = (laser%profile_transverse_max - laser%profile_transverse_min) &
-        / REAL(laser%n_transverse_points - 1, num)
-    dt = (laser%t_end - laser%t_start) / REAL(laser%n_t_points - 1, num)
-
-    idx_pos = INT((pos - laser%profile_transverse_min) / dy) + 1
-    idx_t = INT((time - laser%t_start) / dt) + 1
-
-    ! Clamp to valid interpolation range [1, n-1]
-    idx_pos = MAX(1, MIN(idx_pos, laser%n_transverse_points - 1))
-    idx_t = MAX(1, MIN(idx_t, laser%n_t_points - 1))
-
-    ! --- 3. Bilinear Interpolation Math ---
-    pos0 = laser%profile_transverse_min + REAL(idx_pos - 1, num) * dy
-    t0 = laser%t_start + REAL(idx_t - 1, num) * dt
-    u = (pos - pos0) / dy
-    v = (time - t0) / dt
-
-    ! Grab the 4 surrounding pixel values from the data matrix
-    q11 = laser%file_field_matrix(idx_pos,   idx_t)      ! Bottom-Left
-    q21 = laser%file_field_matrix(idx_pos+1, idx_t)      ! Top-Left
-    q12 = laser%file_field_matrix(idx_pos,   idx_t+1)    ! Bottom-Right
-    q22 = laser%file_field_matrix(idx_pos+1, idx_t+1)    ! Top-Right
-
-    ! Execute bilinear interpolation formula
-    custom_laser_profile = (1.0_num - u) * (1.0_num - v) * q11 &
-                         + u * (1.0_num - v) * q21             &
-                         + (1.0_num - u) * v * q12             &
-                         + u * v * q22
+    custom_laser_profile = sample_spatiotemporal_matrix( &
+        laser%file_field_matrix, pos, time, &
+        laser%profile_transverse_min, laser%profile_transverse_max, &
+        laser%n_transverse_points, laser%t_start, laser%t_end, &
+        laser%n_t_points)
 
   END FUNCTION custom_laser_profile
 
@@ -430,8 +456,6 @@ CONTAINS
   REAL(num) FUNCTION custom_laser_phase(laser, pos)
     TYPE(laser_block), INTENT(INOUT) :: laser
     REAL(num), INTENT(IN) :: pos
-    INTEGER :: idx_pos, idx_t
-    REAL(num) :: dy, dt, pos0, t0, u, v, q11, q12, q21, q22
     CHARACTER(LEN=c_max_path_length) :: fname
 
     ! Ensure this laser's 2D phase data is loaded into memory on first call.
@@ -445,45 +469,11 @@ CONTAINS
       CALL load_phase_profile(laser, fname)
     END IF
 
-    ! Default return value if coordinates fall completely outside the
-    ! deck-declared grid. The amplitude envelope is likewise zero there, so
-    ! the phase value is immaterial.
-    custom_laser_phase = 0.0_num
-
-    ! --- 1. Boundary & Guard Checks ---
-    IF (pos < laser%profile_transverse_min &
-        .OR. pos > laser%profile_transverse_max) RETURN
-    IF (time < laser%t_start .OR. time > laser%t_end) RETURN
-
-    ! --- 2. Locate the Bounding Cell Box ---
-    dy = (laser%profile_transverse_max - laser%profile_transverse_min) &
-        / REAL(laser%n_transverse_points - 1, num)
-    dt = (laser%t_end - laser%t_start) / REAL(laser%n_t_points - 1, num)
-
-    idx_pos = INT((pos - laser%profile_transverse_min) / dy) + 1
-    idx_t = INT((time - laser%t_start) / dt) + 1
-
-    ! Clamp to valid interpolation range [1, n-1]
-    idx_pos = MAX(1, MIN(idx_pos, laser%n_transverse_points - 1))
-    idx_t = MAX(1, MIN(idx_t, laser%n_t_points - 1))
-
-    ! --- 3. Bilinear Interpolation Math ---
-    pos0 = laser%profile_transverse_min + REAL(idx_pos - 1, num) * dy
-    t0 = laser%t_start + REAL(idx_t - 1, num) * dt
-    u = (pos - pos0) / dy
-    v = (time - t0) / dt
-
-    ! Grab the 4 surrounding pixel values from the phase matrix
-    q11 = laser%file_phase_matrix(idx_pos,   idx_t)      ! Bottom-Left
-    q21 = laser%file_phase_matrix(idx_pos+1, idx_t)      ! Top-Left
-    q12 = laser%file_phase_matrix(idx_pos,   idx_t+1)    ! Bottom-Right
-    q22 = laser%file_phase_matrix(idx_pos+1, idx_t+1)    ! Top-Right
-
-    ! Execute bilinear interpolation formula
-    custom_laser_phase = (1.0_num - u) * (1.0_num - v) * q11 &
-                       + u * (1.0_num - v) * q21             &
-                       + (1.0_num - u) * v * q12             &
-                       + u * v * q22
+    custom_laser_phase = sample_spatiotemporal_matrix( &
+        laser%file_phase_matrix, pos, time, &
+        laser%profile_transverse_min, laser%profile_transverse_max, &
+        laser%n_transverse_points, laser%t_start, laser%t_end, &
+        laser%n_t_points)
 
   END FUNCTION custom_laser_phase
 
