@@ -322,12 +322,14 @@ SRCFILES = background_collisions.F90 balance.F90 bethe_heitler.F90 \
 	deck_bremsstrahlung_block.F90 deck_collision_block.F90 \
 	deck_constant_block.f90 deck_control_block.F90 deck_dist_fn_block.f90 \
 	deck_fields_block.f90 deck_injector_block.F90 deck_io_block.F90 \
-	deck_io_global_block.F90 deck_laser_block.f90 deck_part_from_file_block.F90 \
+	deck_io_global_block.F90 deck_laser_antenna_block.f90 \
+	deck_laser_block.f90 deck_part_from_file_block.F90 \
 	deck_particle_probe_block.F90 deck_qed_block.F90 deck_species_block.F90 \
 	deck_stencil_block.f90 deck_subset_block.F90 deck_window_block.f90 \
 	deltaf_loader.F90 diagnostics.F90 dist_fn.F90 epoch2d.F90 evaluate.F90 \
 	evaluator_blocks.F90 fields.f90 file_injectors.F90 finish.f90 helper.F90 \
 	ic_module.f90 injectors.F90 ionise.F90 iterators.F90 laser.f90 \
+	laser_antenna.f90 \
 	mpi_routines.F90 mpi_subtype_control.f90 numerics.f90 particle_id_hash.F90 \
 	particle_migration.F90 particle_pointer_advance.f90 particle_temperature.F90 \
 	particles.F90 partlist.F90 photons.F90 prefetch.F90 probes.F90 \
@@ -478,7 +480,8 @@ deck.o: deck.F90 bremsstrahlung.o custom_deck.o deck_boundaries_block.o \
   deck_bremsstrahlung_block.o deck_collision_block.o deck_constant_block.o \
   deck_control_block.o deck_dist_fn_block.o deck_fields_block.o \
   deck_injector_block.o deck_io_block.o deck_io_global_block.o \
-  deck_laser_block.o deck_part_from_file_block.o deck_particle_probe_block.o \
+  deck_laser_antenna_block.o deck_laser_block.o deck_part_from_file_block.o \
+  deck_particle_probe_block.o \
   deck_qed_block.o deck_species_block.o deck_stencil_block.o \
   deck_subset_block.o deck_window_block.o photons.o strings.o utilities.o \
   version_data.o $(SDFMOD)
@@ -497,6 +500,8 @@ deck_injector_block.o: deck_injector_block.F90 file_injectors.o injectors.o \
 	shunt.o strings_advanced.o utilities.o
 deck_io_block.o: deck_io_block.F90 strings_advanced.o utilities.o
 deck_io_global_block.o: deck_io_global_block.F90 strings_advanced.o utilities.o
+deck_laser_antenna_block.o: deck_laser_antenna_block.f90 fields.o \
+  laser_antenna.o strings_advanced.o utilities.o
 deck_laser_block.o: deck_laser_block.f90 laser.o strings_advanced.o utilities.o
 deck_part_from_file_block.o: deck_part_from_file_block.F90 \
   deck_species_block.o strings_advanced.o utilities.o
@@ -522,11 +527,12 @@ epoch2d.o: epoch2d.F90 background_collisions.o balance.o bremsstrahlung.o \
 	$(FC) -c $(FFLAGS) $(FLTCONS) -o $(OBJDIR)/$@ $(PREPROFLAGS) $<
 evaluate.o: evaluate.F90 shunt.o stack.o
 evaluator_blocks.o: evaluator_blocks.F90 custom_parser.o stack.o strings.o
-fields.o: fields.f90 boundary.o
+fields.o: fields.f90 boundary.o laser_antenna.o
 	$(FC) -c $(FFLAGS) $(FLTCONS) -o $(OBJDIR)/$@ $(PREPROFLAGS) $<
 file_injectors.o: file_injectors.F90 partlist.o utilities.o
 finish.o: finish.f90 background_collisions.o collisions.o constants.o deck.o \
-	diagnostics.o dist_fn.o injectors.o ionise.o laser.o probes.o setup.o window.o
+	diagnostics.o dist_fn.o injectors.o ionise.o laser.o laser_antenna.o \
+	probes.o setup.o window.o
 helper.o: helper.F90 balance.o boundary.o deltaf_loader.o partlist.o simple_io.o
 ic_module.o: ic_module.f90 helper.o shared_data.o
 injectors.o: injectors.F90 evaluate.o file_injectors.o particle_temperature.o \
@@ -536,6 +542,7 @@ ionise.o: ionise.F90 boundary.o calc_df.o numerics.o partlist.o \
 iterators.o: iterators.F90 particle_id_hash.o particle_pointer_advance.o \
   partlist.o
 laser.o: laser.f90 custom_laser.o evaluate.o
+laser_antenna.o: laser_antenna.f90 custom_laser.o
 mpi_routines.o: mpi_routines.F90 helper.o
 mpi_subtype_control.o: mpi_subtype_control.f90 shared_data.o
 numerics.o: numerics.f90 constants.o

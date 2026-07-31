@@ -21,6 +21,7 @@ MODULE finish
   USE deck
   USE window
   USE laser
+  USE laser_antenna
   USE collisions
   USE background_collisions
   USE dist_fn
@@ -143,6 +144,7 @@ CONTAINS
     CALL deallocate_input_deck_buffer
     CALL deallocate_window
     CALL deallocate_lasers
+    CALL deallocate_antennas
     CALL deallocate_collisions
     CALL deallocate_background_collisions
     CALL deallocate_file_list

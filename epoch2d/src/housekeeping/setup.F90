@@ -109,6 +109,7 @@ CONTAINS
     window_offset = 0.0_num
 
     NULLIFY(lasers)
+    NULLIFY(antennas)
     NULLIFY(dist_fns)
     NULLIFY(io_block_list)
 

@@ -888,6 +888,62 @@ MODULE shared_data
   INTEGER, DIMENSION(2*c_ndims) :: n_lasers
   LOGICAL, DIMENSION(2*c_ndims) :: add_laser = .FALSE.
 
+  !----------------------------------------------------------------------------
+  ! interior laser antenna (Huygens/TFSF injection plane)
+  !----------------------------------------------------------------------------
+  ! An antenna_block prescribes a genuinely vectorial incident field (both
+  ! tangential E and tangential B, not just one derived from the other) on
+  ! an INTERIOR x = x0 plane, rather than at a domain boundary. Distinct
+  ! from laser_block: a laser_block's profile/phase pair drives a boundary
+  ! characteristic condition that constructs B itself; an antenna_block's
+  ! four independent channels (Ey/Ez/By/Bz) are combined into a
+  ! total-field/scattered-field correction applied on either side of x0
+  ! (see src/laser_antenna.f90), radiating the desired wave into the total-
+  ! field side while cancelling its own backward copy on the scattered
+  ! side. See src/deck/deck_laser_antenna_block.f90 for the deck syntax.
+  TYPE antenna_block
+    ! Deck-declared plane position and the actual position used (snapped
+    ! to the nearest B-grid point; see attach_antenna in laser_antenna.f90).
+    REAL(num) :: x0, x0_actual
+    ! Global index of the B-grid seam point (the position of
+    ! by(i0_global-1,:)/bz(i0_global-1,:) in LOCAL indexing on whichever
+    ! rank owns it).
+    INTEGER :: i0_global
+    ! c_bd_x_min or c_bd_x_max: which side is the total (forward-launch)
+    ! field side. c_bd_x_max means x > x0 is total field, x <= x0 is
+    ! scattered-field-only (the antenna's own backward radiation is
+    ! cancelled there); c_bd_x_min mirrors every correction sign.
+    INTEGER :: direction
+    ! Optional scalar multiplier applied to all four incident channels.
+    REAL(num) :: amp = 1.0_num
+    REAL(num) :: t_start = 0.0_num, t_end = 0.0_num
+
+    ! Deck-declared uniform grid for the four incident-field files -- same
+    ! convention as laser_block's spatiotemporal profile/phase (transverse
+    ! axis fastest-varying, n_transverse_points x n_t_points values of
+    ! REAL(num), no embedded header).
+    INTEGER :: n_t_points = 0
+    INTEGER :: n_transverse_points = 0
+    REAL(num) :: profile_transverse_min = 0.0_num
+    REAL(num) :: profile_transverse_max = 0.0_num
+
+    CHARACTER(LEN=c_max_path_length) :: ey_inc_file = ' '
+    CHARACTER(LEN=c_max_path_length) :: ez_inc_file = ' '
+    CHARACTER(LEN=c_max_path_length) :: by_inc_file = ' '
+    CHARACTER(LEN=c_max_path_length) :: bz_inc_file = ' '
+    LOGICAL :: fields_loaded = .FALSE.
+
+    REAL(num), DIMENSION(:,:), POINTER :: ey_inc_matrix => NULL()
+    REAL(num), DIMENSION(:,:), POINTER :: ez_inc_matrix => NULL()
+    REAL(num), DIMENSION(:,:), POINTER :: by_inc_matrix => NULL()
+    REAL(num), DIMENSION(:,:), POINTER :: bz_inc_matrix => NULL()
+
+    TYPE(antenna_block), POINTER :: next
+  END TYPE antenna_block
+
+  TYPE(antenna_block), POINTER :: antennas
+  INTEGER :: n_antennas = 0
+
   TYPE(jobid_type) :: jobid
 
   INTEGER(i4) :: run_date

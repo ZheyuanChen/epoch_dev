@@ -16,6 +16,7 @@
 MODULE fields
 
   USE boundary
+  USE laser_antenna
 
   IMPLICIT NONE
 
@@ -23,6 +24,12 @@ MODULE fields
   REAL(num) :: hdt, fac
   REAL(num) :: hdtx, hdty
   REAL(num) :: cnx, cny
+  ! Physical time B was last advanced to, stashed at the start of
+  ! update_eb_fields_half and reused (not the ambient 'time' variable) by
+  ! both B-correction call sites -- see the comments on
+  ! update_eb_fields_half/update_eb_fields_final below for why 'time'
+  ! itself is NOT safe to read directly at the second call site.
+  REAL(num) :: antenna_t_mid
   REAL(num) :: alphax = 1.0_num, alphay = 1.0_num
   REAL(num) :: betaxy = 0.0_num, betayx = 0.0_num
   REAL(num) :: deltax = 0.0_num, deltay = 0.0_num
@@ -544,11 +551,26 @@ CONTAINS
     ! Update E field to t+dt/2
     CALL update_e_field
 
+    ! Apply the interior laser-antenna E-correction (TFSF) before the
+    ! halo exchange below, so corrected values reach neighbour ranks'
+    ! ghost cells through the ordinary exchange -- no new communication.
+    ! 'time' is correct here (it is the ambient t_n at this call site).
+    CALL apply_antenna_e_correction(time)
+
     ! Now have E(t+dt/2), do boundary conditions on E
     CALL efield_bcs
 
+    ! Stash the time B is about to be advanced to. Both this call's and
+    ! update_eb_fields_final's B-correction must use THIS SAME value --
+    ! reading the ambient 'time' directly at the second call site would be
+    ! wrong, since epoch2d.F90's main loop advances 'time' by a further
+    ! full dt/2 + dt/2 between the two update_eb_fields_* calls.
+    antenna_t_mid = time + hdt
+
     ! Update B field to t+dt/2 using E(t+dt/2)
     CALL update_b_field
+
+    CALL apply_antenna_b_correction(antenna_t_mid)
 
     ! Now have B field at t+dt/2. Do boundary conditions on B
     CALL bfield_bcs(.TRUE.)
@@ -573,9 +595,19 @@ CONTAINS
 
     CALL update_b_field
 
+    ! Reuse the SAME antenna_t_mid stashed in update_eb_fields_half, not
+    ! the ambient 'time' -- see the comment there. This call advances B to
+    ! t_n+dt using E(t_n+dt/2), i.e. the same half-step E this routine's
+    ! earlier call in update_eb_fields_half also used, so the incident
+    ! field sampled here must be at the same time, t_n+dt/2.
+    CALL apply_antenna_b_correction(antenna_t_mid)
+
     CALL bfield_final_bcs
 
     CALL update_e_field
+
+    ! 'time' is correct here (t_n+dt, the ambient value at this call site).
+    CALL apply_antenna_e_correction(time)
 
     CALL efield_bcs
 
