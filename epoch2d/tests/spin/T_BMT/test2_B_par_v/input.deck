@@ -1,0 +1,107 @@
+# T-BMT test 2: velocity parallel to a uniform B, along d = (1,2,2)/3
+# (oblique, so every component of the (beta.B) beta term is exercised).
+# With beta || B the first two terms combine to
+#   (a + 1/gamma) - a gamma/(gamma+1) beta^2 = (1 + a)/gamma,
+# so S precesses about d at Omega = (q/m)(1 + a) b0/gamma. This vanishes
+# only for a = -1 (g = 0): the null test. a = 1 makes the second term
+# large (half of the first at gamma = 3); a_e is the physical electron.
+# S0 = (2,-1,0)/sqrt(5) is perpendicular to d.
+begin:constant
+  # Cell size sets dt (CFL); run_tests.sh rescales it for the dt scan
+  cell = 0.2 * micron
+  # Electron anomalous moment alpha/(2 pi)
+  a_e = 1.1614097e-3
+  # Initial momentum |u| = |p|/(m c) = 2 sqrt(2), i.e. gamma = 3
+  u0 = 2 * sqrt(2)
+  b0 = 100.0
+  e0 = 1.0e10
+end:constant
+
+begin:control
+  nx = 16
+  ny = 16
+  x_min = 0
+  x_max = 16 * cell
+  y_min = 0
+  y_max = 16 * cell
+  t_end = 1.1 * pico
+  stdout_frequency = 1000
+end:control
+
+begin:boundaries
+  bc_x_min = periodic
+  bc_x_max = periodic
+  bc_y_min = periodic
+  bc_y_max = periodic
+end:boundaries
+
+begin:fields
+  bx = b0 / 3
+  by = 2 * b0 / 3
+  bz = 2 * b0 / 3
+end:fields
+
+begin:species
+  name = a_minus1
+  identify:electron
+  anomalous_magnetic_moment = -1.0
+  nparticles = 4
+  number_density = 1.0
+  temperature = 0
+  drift_x = u0 * me * c / 3
+  drift_y = 2 * u0 * me * c / 3
+  drift_z = 2 * u0 * me * c / 3
+  spin = directed
+  spin_x = 2
+  spin_y = -1
+  spin_z = 0
+end:species
+
+begin:species
+  name = a_electron
+  identify:electron
+  anomalous_magnetic_moment = a_e
+  nparticles = 4
+  number_density = 1.0
+  temperature = 0
+  drift_x = u0 * me * c / 3
+  drift_y = 2 * u0 * me * c / 3
+  drift_z = 2 * u0 * me * c / 3
+  spin = directed
+  spin_x = 2
+  spin_y = -1
+  spin_z = 0
+end:species
+
+begin:species
+  name = a_one
+  identify:electron
+  anomalous_magnetic_moment = 1.0
+  nparticles = 4
+  number_density = 1.0
+  temperature = 0
+  drift_x = u0 * me * c / 3
+  drift_y = 2 * u0 * me * c / 3
+  drift_z = 2 * u0 * me * c / 3
+  spin = directed
+  spin_x = 2
+  spin_y = -1
+  spin_z = 0
+end:species
+
+begin:output
+  dt_snapshot = 10 * femto
+  particles = always
+  px = always
+  py = always
+  pz = always
+  spin_x = always
+  spin_y = always
+  spin_z = always
+  ex = always
+  ey = always
+  ez = always
+  bx = always
+  by = always
+  bz = always
+end:output
