@@ -295,6 +295,29 @@ CONTAINS
             species_list(i)%spin_distribution = c_spin_uniform
           END IF
         END IF
+
+        ! Neither the deck nor "identify" gave a moment. Placeholder until
+        ! the per-species policy is settled: a = 0 (g = 2), with a warning
+        ! for species that precess
+        IF (species_list(i)%anomalous_magnetic_moment &
+            <= c_anomalous_moment_unset) THEN
+          species_list(i)%anomalous_magnetic_moment = 0.0_num
+          IF (rank == 0 &
+              .AND. species_list(i)%species_type /= c_species_id_photon &
+              .AND. ABS(species_list(i)%charge) > c_tiny) THEN
+            DO iu = 1, nio_units ! Print to stdout and to file
+              io = io_units(iu)
+              WRITE(io,*) ''
+              WRITE(io,*) '*** WARNING ***'
+              WRITE(io,*) 'The species named "' &
+                  // TRIM(species_list(i)%name) &
+                  // '" has no anomalous magnetic moment.'
+              WRITE(io,*) 'Set "anomalous_magnetic_moment" or "identify";', &
+                  ' using 0 (g = 2) for spin precession.'
+              WRITE(io,*) ''
+            END DO
+          END IF
+        END IF
       END DO
 #endif
 
@@ -332,14 +355,15 @@ CONTAINS
     got_name = .FALSE.
     species_dumpmask = c_io_always
     species_bc_particle = c_bc_null
+#ifdef SPIN
+    ! Reset on both passes: the per-species arrays are filled on the first
+    species_spin_distribution = c_spin_null
+    species_spin_orientation = 0.0_num
+    species_anomalous_magnetic_moment = c_anomalous_moment_unset
+#endif
     IF (deck_state == c_ds_first) RETURN
     species_id = species_blocks(current_block)
     offset = 0
-#ifdef SPIN
-    species_spin_distribution = c_spin_null
-    species_spin_orientation = (/0.0_num, 0.0_num, 0.0_num/)
-    species_anomalous_magnetic_moment = -1
-#endif
   END SUBROUTINE species_block_start
 
 
@@ -1947,6 +1971,15 @@ CONTAINS
             species_list(new_ion)%dumpmask = species_list(i_spec)%dumpmask
             species_list(new_ion)%bc_particle = &
                 species_list(i_spec)%bc_particle
+#ifdef SPIN
+            ! Ions down the chain share the parent block's spin settings
+            species_list(new_ion)%spin_distribution = &
+                species_list(i_spec)%spin_distribution
+            species_list(new_ion)%spin_orientation = &
+                species_list(i_spec)%spin_orientation
+            species_list(new_ion)%anomalous_magnetic_moment = &
+                species_list(i_spec)%anomalous_magnetic_moment
+#endif
             species_list(new_ion)%count = 0
             species_charge_set(new_ion) = .TRUE.
 
@@ -1983,6 +2016,10 @@ CONTAINS
               species_list(new_el)%atomic_no_set = .TRUE.
               species_list(new_el)%bc_particle = &
                   species_list(i_spec)%bc_particle
+#ifdef SPIN
+              species_list(new_el)%anomalous_magnetic_moment = &
+                  anomalous_mag_dipole_moment_electron_constant
+#endif
               species_list(new_el)%count = 0
               species_charge_set(new_el) = .TRUE.
 
@@ -2043,13 +2080,12 @@ CONTAINS
       species_list(species_id)%mass = m0
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%species_type = c_species_id_electron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_list(species_id)%electron = .TRUE.
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
-#ifdef SPIN
-      species_list(species_id)%anomalous_magnetic_moment &
-        = anomalous_mag_dipole_moment_electron_constant
-#endif
       RETURN
     END IF
 
@@ -2058,12 +2094,11 @@ CONTAINS
       species_list(species_id)%mass = m0 * 1836.2_num
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%species_type = c_species_id_proton
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_proton_constant)
+#endif
       species_list(species_id)%atomic_no = 1
       species_list(species_id)%atomic_no_set = .TRUE.
-#ifdef SPIN
-      species_list(species_id)%anomalous_magnetic_moment &
-        = anomalous_mag_dipole_moment_proton_constant
-#endif
       RETURN
     END IF
 
@@ -2072,12 +2107,11 @@ CONTAINS
       species_list(species_id)%mass = m0
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%species_type = c_species_id_positron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
-#ifdef SPIN
-      species_list(species_id)%anomalous_magnetic_moment &
-        = anomalous_mag_dipole_moment_electron_constant
-#endif
       RETURN
     END IF
 
@@ -2100,6 +2134,9 @@ CONTAINS
       species_list(species_id)%charge = -q0
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_electron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%electron = .TRUE.
 #if defined(PHOTONS) && defined(TRIDENT_PHOTONS)
@@ -2116,6 +2153,9 @@ CONTAINS
       species_list(species_id)%charge = -q0 
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_electron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%electron = .TRUE.
 #ifdef PHOTONS
@@ -2133,6 +2173,9 @@ CONTAINS
       species_list(species_id)%mass = m0
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%species_type = c_species_id_positron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
 #ifdef PHOTONS
       lbw_positron_species = species_id
 #endif
@@ -2147,6 +2190,9 @@ CONTAINS
       species_list(species_id)%charge = -q0
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_electron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%electron = .TRUE.
 #ifdef PHOTONS
@@ -2165,6 +2211,9 @@ CONTAINS
       species_list(species_id)%mass = m0
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%species_type = c_species_id_positron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
 #ifdef PHOTONS
       breit_wheeler_positron_species = species_id
 #endif
@@ -2178,6 +2227,9 @@ CONTAINS
       species_list(species_id)%charge = q0
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_positron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
 #if defined(PHOTONS) && defined(TRIDENT_PHOTONS)
       trident_positron_species = species_id
@@ -2194,6 +2246,9 @@ CONTAINS
       species_list(species_id)%charge = -q0
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_electron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%electron = .TRUE.
 #if defined(BREMSSTRAHLUNG) && defined(BREM_TRIDENT)
@@ -2211,6 +2266,9 @@ CONTAINS
       species_list(species_id)%charge = q0
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_positron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
 #if defined(BREMSSTRAHLUNG) && defined(BREM_TRIDENT)
       brem_trident_positron_species = species_id
@@ -2260,6 +2318,9 @@ CONTAINS
       species_list(species_id)%charge = -q0
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_electron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%electron = .TRUE.
       species_list(species_id)%atomic_no = 0
@@ -2277,6 +2338,9 @@ CONTAINS
       species_list(species_id)%charge = q0
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_positron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
@@ -2292,6 +2356,9 @@ CONTAINS
       species_list(species_id)%charge = -q0
       species_list(species_id)%mass = m_mu
       species_list(species_id)%species_type = c_species_id_muon
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_muon_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
@@ -2306,6 +2373,9 @@ CONTAINS
       species_list(species_id)%charge = q0
       species_list(species_id)%mass = m_mu
       species_list(species_id)%species_type = c_species_id_antimuon
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_muon_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
@@ -2322,6 +2392,9 @@ CONTAINS
       species_list(species_id)%charge = -q0
       species_list(species_id)%mass = m_mu
       species_list(species_id)%species_type = c_species_id_muon
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_muon_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
@@ -2338,6 +2411,9 @@ CONTAINS
       species_list(species_id)%charge = q0
       species_list(species_id)%mass = m_mu
       species_list(species_id)%species_type = c_species_id_antimuon
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_muon_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
@@ -2396,6 +2472,23 @@ CONTAINS
     WRITE(du,'(A,I9)') TRIM(element) // ' = ', res
 
   END FUNCTION as_spin_distribution_print
+
+
+
+  SUBROUTINE set_identify_moment(moment)
+
+    ! Give the current species the anomalous magnetic moment implied by
+    ! "identify", unless the deck set one explicitly. identify runs on the
+    ! second pass, after species_list holds the first-pass deck values, so
+    ! an explicit value wins whatever its order in the block.
+    REAL(num), INTENT(IN) :: moment
+
+    IF (species_list(species_id)%anomalous_magnetic_moment &
+        <= c_anomalous_moment_unset) THEN
+      species_list(species_id)%anomalous_magnetic_moment = moment
+    END IF
+
+  END SUBROUTINE set_identify_moment
 #endif
 
 END MODULE deck_species_block

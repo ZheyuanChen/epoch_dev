@@ -337,6 +337,12 @@ CONTAINS
       NULLIFY(species_list(ispecies)%secondary_list)
       NULLIFY(species_list(ispecies)%background_density)
       species_list(ispecies)%bc_particle = c_bc_null
+#ifdef SPIN
+      species_list(ispecies)%spin_distribution = c_spin_null
+      species_list(ispecies)%spin_orientation = 0.0_num
+      species_list(ispecies)%anomalous_magnetic_moment = &
+          c_anomalous_moment_unset
+#endif
     END DO
 
     DO ispecies = 1, n_species

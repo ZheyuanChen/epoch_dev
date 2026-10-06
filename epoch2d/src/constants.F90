@@ -107,6 +107,9 @@ MODULE constants
   INTEGER, PARAMETER :: c_spin_null = -1
   INTEGER, PARAMETER :: c_spin_uniform = 1
   INTEGER, PARAMETER :: c_spin_directed = 2
+  ! Marks an anomalous magnetic moment not (yet) set by the deck.
+  ! Non-physical, unlike -1 (which means g = 0)
+  REAL(num), PARAMETER :: c_anomalous_moment_unset = -HUGE(1.0_num)
 #endif
 
 

@@ -139,10 +139,11 @@ CONTAINS
 #endif
 #ifdef SPIN
     REAL(num) :: part_sx, part_sy, part_sz
-    REAL(num) :: vx_avg, vy_avg, vz_avg
-    REAL(num) :: v_avg_dot_B, spin_f1, spin_f2, spin_f3
-    REAL(num) :: spin_rotation_x, spin_rotation_y, spin_rotation_z  
-    REAL(num) :: spin_spx, spin_spy, spin_spz
+    REAL(num) :: ux_avg, uy_avg, uz_avg
+    REAL(num) :: gamma_mid
+    REAL(num) :: u_avg_dot_B, spin_f1, spin_f2, spin_f3, spin_f4
+    REAL(num) :: spin_rotation_x, spin_rotation_y, spin_rotation_z
+    REAL(num) :: spin_primex, spin_primey, spin_primez
     REAL(num) :: spin_anomalous_magnetic_moment
     ! Holder of the three omega coefficients in T-BMT
     REAL(num) :: omega_B, omega_v, omega_E
@@ -417,6 +418,11 @@ CONTAINS
         ! Half timestep, then use Boris1970 rotation, see Birdsall and Langdon
         gamma_rel = SQRT(uxm**2 + uym**2 + uzm**2 + 1.0_num)
 #endif
+#ifdef SPIN
+        ! Time-centred gamma used by the rotation (Boris or HC); kept for
+        ! the T-BMT step, since gamma_rel is overwritten with gamma^{n+1}
+        gamma_mid = gamma_rel
+#endif
         root = ccmratio / gamma_rel
 
         taux = bx_part * root
@@ -458,90 +464,111 @@ CONTAINS
         part_x = part_x + delta_x
         part_y = part_y + delta_y
 
-        ! Now update spin! T-BMT
-        ! The current version only supports Boris pusher i believe
+        ! Now update spin according to T-BMT: ds/dt=-omega x s
         ! Also prob add a guard to detect those species that have
         ! anomalous magnetic moment defined.
 #ifdef SPIN
+        ! Overall logic:(1) compute omega using velocities at half-
+        ! time step. (2) update spin using a Boris-like rotation
         part_sx = current%spin(1)
         part_sy = current%spin(2)
         part_sz = current%spin(3)
 
-        ! repeating the Boris rotation on the velocity with half the timestep
-        ! to get the time staggered velocity
-        taux = 0.5_num * bx_part * root
-        tauy = 0.5_num * by_part * root
-        tauz = 0.5_num * bz_part * root
+        ! beta at n+1/2: the velocity used by the rotation above,
+        ! (u- + u+) / (2 gamma_mid), for both Boris and HC
+        ux_avg = 0.5_num * (uxm + uxp) / gamma_mid
+        uy_avg = 0.5_num * (uym + uyp) / gamma_mid
+        uz_avg = 0.5_num * (uzm + uzp) / gamma_mid
 
-        taux2 = taux**2
-        tauy2 = tauy**2
-        tauz2 = tauz**2
 
-        tau = 1.0_num / (1.0_num + taux2 + tauy2 + tauz2)
+        ! Arc midpoint method -- inconsistent with HC and also more
+        ! expensive. Kept here for reference
 
-        ! the normalised velocity v/c at the half time step
-        vx_avg = (((1.0_num + taux2 - tauy2 - tauz2) * uxm &
-            + 2.0_num * ((taux * tauy + tauz) * uym &
-            + (taux * tauz - tauy) * uzm)) * tau) / gamma_rel
-        vy_avg = (((1.0_num - taux2 + tauy2 - tauz2) * uym &
-            + 2.0_num * ((tauy * tauz + taux) * uzm &
-            + (tauy * taux - tauz) * uxm)) * tau) / gamma_rel
-        vz_avg = (((1.0_num - taux2 - tauy2 + tauz2) * uzm &
-            + 2.0_num * ((tauz * taux + tauy) * uxm &
-            + (tauz * tauy - taux) * uym)) * tau) / gamma_rel
+        ! Compute the half-time-step-tau vector by reusing old tau:
+        !tau_half_x = taux / (1.0_num + SQRT(1 + taux2 + tauy2 + tauz2) )
+        !tau_half_y = tauy / (1.0_num + SQRT(1 + taux2 + tauy2 + tauz2) )
+        !tau_half_z = tauz / (1.0_num + SQRT(1 + taux2 + tauy2 + tauz2) )
 
-        ! ds/dt = s x spin_rotation
-        ! with
-        ! spin_rotation = - dt/2 e/m [(a + 1/gamma)(B - (v/c)x(E/c)) 
-        !    - (v/c) (a gamma/(gamma + 1)) (v/c) . B]
-        v_avg_dot_B = vx_avg * bx_part + vy_avg * by_part + vz_avg*bz_part
-        
-        omega_B = spin_anomalous_magnetic_moment + 1.0_num / gamma_rel
-        omega_v = spin_anomalous_magnetic_moment * gamma_rel &
-            / (1.0_num + gamma_rel)
-        omega_E = spin_anomalous_magnetic_moment + 1 / (1.0_num + gamma_rel)
+        !taux2 = tau_half_x**2
+        !tauy2 = tau_half_y**2
+        !tauz2 = tau_half_z**2
 
+        !tau = 1.0_num / (1.0_num + taux2 + tauy2 + tauz2)
+
+        ! the normalised velocity u = v/c at the half time step
+        ! note that gamma_mid is the gamma at half-time step, preserved from earlier
+        !ux_avg = (((1.0_num + taux2 - tauy2 - tauz2) * uxm &
+        !    + 2.0_num * ((tau_half_x * tau_half_y + tau_half_z) * uym &
+        !    + (tau_half_x * tau_half_z - tau_half_y) * uzm)) * tau) / gamma_mid
+        !uy_avg = (((1.0_num - taux2 + tauy2 - tauz2) * uym &
+        !    + 2.0_num * ((tau_half_y * tau_half_z + tau_half_x) * uzm &
+        !    + (tau_half_y * tau_half_x - tau_half_z) * uxm)) * tau) / gamma_mid
+        !uz_avg = (((1.0_num - taux2 - tauy2 + tauz2) * uzm &
+        !    + 2.0_num * ((tau_half_z * tau_half_x + tau_half_y) * uxm &
+        !    + (tau_half_z * tau_half_y - tau_half_x) * uym)) * tau) / gamma_mid
+
+        ! The three omega coefficients in Qian (2.46)
+        omega_B = spin_anomalous_magnetic_moment + 1.0_num / gamma_mid
+        omega_v = spin_anomalous_magnetic_moment * gamma_mid &
+            / (1.0_num + gamma_mid)
+        omega_E = spin_anomalous_magnetic_moment + 1.0_num / (1.0_num &
+            + gamma_mid)
+
+        ! Multiply by q/mc
         spin_f1 = part_q * omega_B / part_m
         spin_f2 = part_q * omega_v / part_m
-        ! PRINT*, 'SPIN', dto2, gamma_rel, spin_f1, by_part, spin_f1 * by_part
-        spin_rotation_x = - dtfac * (spin_f1 * ( bx_part &
-            - (vy_avg * ez_part - vz_avg * ey_part) / c) &
-            - spin_f2 * vx_avg * v_avg_dot_B)
+        spin_f3 = part_q * omega_E / part_mc
 
-        spin_rotation_y = - dtfac * (spin_f1 * ( by_part &
-            - (vz_avg * ex_part - vx_avg * ez_part) / c) &
-            - spin_f2 * vy_avg * v_avg_dot_B)
+        ! ds/dt = - spin_rotation(aka omega) x s
+        ! spin_rotation = spin_f1*B - spin_f2*beta*B beta
+            !       - spin_f3*beta x E
+            ! where beta = v/c = u
 
-        spin_rotation_z = - dtfac * (spin_f1 * ( bz_part &
-            - (vx_avg * ey_part - vy_avg * ex_part) / c) &
-            - spin_f2 * vz_avg * v_avg_dot_B)
+        ! compute u dot B
+        u_avg_dot_B = ux_avg * bx_part + uy_avg * by_part + uz_avg * bz_part
+
+        ! As every term involves one field multiplication, a multiplicative
+        ! factor "fac" is used to take care of particle shapes
+        ! A prefactor of dt fac /2 is multiplied to the actual omega in the
+        ! equation.
+        !See later: spin_rotation is actually the "t_omega" vector
+        spin_rotation_x = dtfac * ((spin_f1 * bx_part) &
+            - spin_f2 * u_avg_dot_B * ux_avg &
+            - spin_f3 * (uy_avg * ez_part - uz_avg * ey_part))
+        spin_rotation_y = dtfac * ((spin_f1 * by_part) &
+            - spin_f2 * u_avg_dot_B * uy_avg &
+            - spin_f3 * (uz_avg * ex_part - ux_avg * ez_part))
+        spin_rotation_z = dtfac * ((spin_f1 * bz_part) &
+            - spin_f2 * u_avg_dot_B * uz_avg &
+            - spin_f3 * (ux_avg * ey_part - uy_avg * ex_part))
 
         ! now perform a Boris-style rotation on the spin vector
-        ! spin_sp = spin_old + spin_old x spin_rotation
-        ! spin_new = spin_old 
-        !     + 2 spin_sp x spin_rotation / ( 1 + |spin_rotation|^2 )
-
-        spin_f3 = 2.0_num / (1 + spin_rotation_x*spin_rotation_x &
+        ! For calculation see my notes
+        ! Define vector t_omega = dt/2 * spin_rotation
+        ! S_updated = S_old + 2/(1+t_omega^2) S' cross t_omega
+        ! where S' = S_old + S_old cross t_omega
+        ! Note that spin_rotation in the code  is actually t_omega
+        spin_f4 = 2.0_num / (1.0_num + spin_rotation_x*spin_rotation_x &
             + spin_rotation_y * spin_rotation_y &
             + spin_rotation_z * spin_rotation_z)
 
-        spin_spx = part_sx + part_sy * spin_rotation_z &
-          - part_sz * spin_rotation_y
+        spin_primex = part_sx + part_sy * spin_rotation_z &
+            - part_sz * spin_rotation_y
 
-        spin_spy = part_sy + part_sz * spin_rotation_x &
-          - part_sx * spin_rotation_z
+        spin_primey = part_sy + part_sz * spin_rotation_x &
+            - part_sx * spin_rotation_z
 
-        spin_spz = part_sz + part_sx * spin_rotation_y &
-          - part_sy * spin_rotation_x
+        spin_primez = part_sz + part_sx * spin_rotation_y &
+            - part_sy * spin_rotation_x
 
-        current%spin(1) = part_sx + spin_f3 * (spin_spy * spin_rotation_z &
-            - spin_spz * spin_rotation_y)
+        current%spin(1) = part_sx + spin_f4 * (spin_primey * spin_rotation_z &
+            - spin_primez * spin_rotation_y)
 
-        current%spin(2) = part_sy + spin_f3 * (spin_spz * spin_rotation_x &
-            - spin_spx * spin_rotation_z)
+        current%spin(2) = part_sy + spin_f4 * (spin_primez * spin_rotation_x &
+            - spin_primex * spin_rotation_z)
 
-        current%spin(3) = part_sz + spin_f3 * (spin_spx * spin_rotation_y &
-            - spin_spy * spin_rotation_x)
+        current%spin(3) = part_sz + spin_f4 * (spin_primex * spin_rotation_y &
+            - spin_primey * spin_rotation_x)
 #endif
 
 
