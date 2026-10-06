@@ -691,6 +691,15 @@ CONTAINS
         CALL write_particle_variable(c_dump_part_rate_3br, code, &
             'rate_3_body_recombination', 'm^3/s', it_output_real)
 #endif
+#ifdef SPIN
+        CALL write_particle_variable(c_dump_part_spin_x, code, &
+            'Spin_x', '', it_output_real)
+        CALL write_particle_variable(c_dump_part_spin_y, code, &
+            'Spin_y', '', it_output_real)
+        CALL write_particle_variable(c_dump_part_spin_z, code, &
+            'Spin_z', '', it_output_real)
+#endif
+
         CALL write_particle_grid(code)
 
         ! These are derived variables from the particles

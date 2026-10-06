@@ -638,6 +638,7 @@ CONTAINS
   FUNCTION delta_optical_depth(eta, gamma_rel)
 
     ! Function that calcualtes the change to the optical depth
+    ! c.f. Ridgers et al 2014 eqn (2)
     REAL(num) :: delta_optical_depth
     REAL(num), INTENT(IN) :: eta, gamma_rel
     REAL(num) :: hsokolov
@@ -1186,7 +1187,7 @@ CONTAINS
     REAL(num) :: fx, fp, y_lt, y_gt, x_value, y_interp, xdif1, xdif2, xdifm
     LOGICAL, SAVE :: warning = .TRUE.
 
-    x_value = LOG10(x_in)
+    x_value = LOG10(x_in) ! The interpolation is performed in log10-space
 
     ! Scan through x to find correct row of table
     i1 = 1

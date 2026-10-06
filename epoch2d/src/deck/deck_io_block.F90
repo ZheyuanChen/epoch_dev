@@ -622,6 +622,19 @@ CONTAINS
       elementselected = c_dump_part_work_z_total
 #endif
 
+  ! Spin: the name should match that defined in constants
+#ifdef SPIN
+    ELSE IF (str_cmp(element, 'spin_x')) THEN
+      elementselected = c_dump_part_spin_x
+
+    ELSE IF (str_cmp(element, 'spin_y')) THEN
+      elementselected = c_dump_part_spin_y
+
+    ELSE IF (str_cmp(element, 'spin_z')) THEN
+      elementselected = c_dump_part_spin_z
+#endif
+
+
 #ifdef TRANSITION_RATES
     ELSE IF (str_cmp(element, 'rate_fi')) THEN
       elementselected = c_dump_part_rate_fi
@@ -1155,6 +1168,17 @@ CONTAINS
     io_block%dumpmask(c_dump_part_work_z_total) = &
          IOR(io_block%dumpmask(c_dump_part_work_z_total), c_io_restartable)
 #endif   
+
+    ! Spin
+#ifdef SPIN
+    io_block%dumpmask(c_dump_part_spin_x) = &
+        IOR(io_block%dumpmask(c_dump_part_spin_x), c_io_restartable)
+    io_block%dumpmask(c_dump_part_spin_y) = &
+        IOR(io_block%dumpmask(c_dump_part_spin_y), c_io_restartable)
+    io_block%dumpmask(c_dump_part_spin_z) = &
+        IOR(io_block%dumpmask(c_dump_part_spin_z), c_io_restartable)
+#endif 
+
     ! Persistent IDs
     io_block%dumpmask(c_dump_persistent_ids) = &
         IOR(io_block%dumpmask(c_dump_persistent_ids), c_io_restartable)

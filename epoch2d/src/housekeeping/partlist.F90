@@ -106,6 +106,13 @@ CONTAINS
 #endif
     ! Persistent IDs
     IF (any_persistent_subset) nvar = nvar+1
+! Spin: 3 for lepton spins
+! and 3 for polarisation???
+! Let's use 3 for now
+#ifdef SPIN
+    nvar = nvar+3
+#endif
+
 
   END SUBROUTINE set_partlist_size
 
@@ -514,6 +521,12 @@ CONTAINS
     array(cpos+4) = a_particle%rate_3br
     cpos = cpos+5
 #endif
+! Spin
+#ifdef SPIN
+    array(cpos:cpos+2) = a_particle%spin
+    cpos = cpos+3
+#endif
+
     IF (any_persistent_subset) THEN
       temp_i8 = id_registry%map(a_particle)
       array(cpos) = TRANSFER(temp_i8, 1.0_num)
@@ -605,6 +618,11 @@ CONTAINS
     a_particle%rate_3br = array(cpos+4)
     cpos = cpos+5
 #endif
+!Spin
+#ifdef SPIN
+    a_particle%spin = array(cpos:cpos+2)
+    cpos = cpos+3
+#endif
     IF (any_persistent_subset) THEN
       CALL id_registry%add_with_map(a_particle, TRANSFER(array(cpos), temp_i8))
       cpos = cpos+1
@@ -671,6 +689,10 @@ CONTAINS
     new_particle%rate_dr = 0.0_num
     new_particle%rate_rr = 0.0_num
     new_particle%rate_3br = 0.0_num
+#endif
+! Spin
+#ifdef SPIN
+    new_particle%spin = (/0.0, 0.0, 1.0/)
 #endif
 
   END SUBROUTINE init_particle

@@ -102,6 +102,14 @@ MODULE constants
   INTEGER, PARAMETER :: c_bd_z_min = 5
   INTEGER, PARAMETER :: c_bd_z_max = 6
 
+  ! Holger added this. NOt sure what it does yet
+#ifdef SPIN
+  INTEGER, PARAMETER :: c_spin_null = -1
+  INTEGER, PARAMETER :: c_spin_uniform = 1
+  INTEGER, PARAMETER :: c_spin_directed = 2
+#endif
+
+
   ! Frequency function type codes
   INTEGER, PARAMETER :: c_of_omega = 1
   INTEGER, PARAMETER :: c_of_freq = 2
@@ -254,6 +262,17 @@ MODULE constants
   REAL(num), PARAMETER :: log_plasma_screen_const_2 = &
       LOG(SQRT(epsilon0 * kb) / q0 * m0 * c * alpha / 1.4_num / h_bar)
 #endif
+  
+  ! Constants used for spin/polarisation.
+  ! a_e and a_mu (the chi-independent constant version).
+  ! The muon value is from Wikipedia
+#ifdef SPIN
+  REAL(num), PARAMETER :: anomalous_mag_dipole_moment_electron_constant = alpha/(2*pi)
+  REAL(num), PARAMETER :: anomalous_mag_dipole_moment_muon_constant = 0.001165920
+  ! Proton anomalous moment (mu_p / mu_N - 1), CODATA 2018
+  REAL(num), PARAMETER :: anomalous_mag_dipole_moment_proton_constant = &
+      1.79284734463_num
+#endif
 
   ! define special particle IDs
   INTEGER, PARAMETER :: c_species_id_generic = 0
@@ -315,6 +334,10 @@ MODULE constants
   INTEGER(i8), PARAMETER :: c_def_transition_rates = 2**28
   INTEGER(i8), PARAMETER :: c_def_brem_trident = 2**29
   INTEGER(i8), PARAMETER :: c_def_brem_muon = 2**30
+  ! Spin
+  INTEGER(i8), PARAMETER :: c_def_spin = 2_i8**31
+
+
 
   ! Stagger types
   INTEGER, PARAMETER :: c_stagger_ex = c_stagger_face_x
@@ -663,7 +686,14 @@ MODULE constants
   INTEGER, PARAMETER :: c_dump_part_rate_3br     = 78
   INTEGER, PARAMETER :: c_dump_part_dep_brem_tri = 79
   INTEGER, PARAMETER :: c_dump_part_opdep_bh_mu  = 80
-  INTEGER, PARAMETER :: num_vars_to_dump         = 80
+  ! Spin: how many parameters to dump??? Say 3 first
+  INTEGER, PARAMETER :: c_dump_part_spin_x  = 81
+  INTEGER, PARAMETER :: c_dump_part_spin_y  = 82
+  INTEGER, PARAMETER :: c_dump_part_spin_z  = 83
+  ! The following line needs to be changed as well!
+  INTEGER, PARAMETER :: num_vars_to_dump         = 83
+
+
 
   INTEGER, PARAMETER :: c_subset_random     = 1
   INTEGER, PARAMETER :: c_subset_gamma_min  = 2

@@ -58,6 +58,15 @@ MODULE deck_species_block
   INTEGER :: species_atomic_number
   INTEGER, DIMENSION(2*c_ndims) :: species_bc_particle
   INTEGER :: n_species_blocks
+#ifdef SPIN
+  INTEGER, DIMENSION(:), POINTER :: spin_distribution
+  REAL(num), DIMENSION(:,:), POINTER :: spin_orientation
+  REAL(num), DIMENSION(:), POINTER :: anomalous_magnetic_moment
+  INTEGER :: species_spin_distribution
+  REAL(num), DIMENSION(3) :: species_spin_orientation
+  REAL(num) :: species_anomalous_magnetic_moment
+#endif
+
 
 CONTAINS
 
@@ -85,6 +94,11 @@ CONTAINS
       ALLOCATE(part_count(4))
       ALLOCATE(dumpmask_array(4))
       ALLOCATE(bc_particle_array(2*c_ndims,4))
+#ifdef SPIN
+      ALLOCATE(spin_distribution(4))
+      ALLOCATE(spin_orientation(3,4))
+      ALLOCATE(anomalous_magnetic_moment(4))
+#endif
       ALLOCATE(auto_electrons(4))
       release_species = ''
       release_species_list = ''
@@ -101,7 +115,9 @@ CONTAINS
     INTEGER :: bc
     INTEGER, DIMENSION(2*c_ndims) :: bc_species
     LOGICAL :: error
-
+#ifdef SPIN
+    REAL(num) :: spin_mag
+#endif
     IF (deck_state == c_ds_first) THEN
       n_species_blocks = n_species
       CALL set_n_species
@@ -123,6 +139,11 @@ CONTAINS
         species_list(i)%bc_particle = bc_particle_array(:,i)
         species_list(i)%ionise = species_can_ionise(i)
         species_list(i)%recombine = species_can_recombine(i)
+#ifdef SPIN
+        species_list(i)%spin_distribution = spin_distribution(i)
+        species_list(i)%spin_orientation = spin_orientation(:,i)
+        species_list(i)%anomalous_magnetic_moment = anomalous_magnetic_moment(i)
+#endif
       END DO
 
       ! Set secondary species properties
@@ -152,6 +173,11 @@ CONTAINS
       DEALLOCATE(ionise_to_species)
       DEALLOCATE(recombine_to_species)
       DEALLOCATE(species_names)
+#ifdef SPIN
+      DEALLOCATE(spin_distribution)
+      DEALLOCATE(spin_orientation)
+      DEALLOCATE(anomalous_magnetic_moment)
+#endif
 
       ! Sanity check on periodic boundaries
       DO i = 1, n_species
@@ -228,6 +254,52 @@ CONTAINS
         CALL abort_code(c_err_bad_value)
       END DO
 
+      ! This sanity check is added by Holger. Need to check
+#ifdef SPIN
+      DO i = 1, n_species
+        ! sanitise particle spin configuration
+        spin_mag = species_list(i)%spin_orientation(1)**2 &
+          + species_list(i)%spin_orientation(2)**2 &
+          + species_list(i)%spin_orientation(3)**2
+        
+        IF (spin_mag > 0.0_num) THEN
+          IF (species_list(i)%spin_distribution == c_spin_uniform) THEN
+            IF (rank == 0) THEN
+              DO iu = 1, nio_units ! Print to stdout and to file
+                io = io_units(iu)
+                WRITE(io,*) '*** ERROR ***'
+                WRITE(io,*) 'The species named "' // TRIM(species_list(i)%name) &
+                    // '" has conflicting spin configuration.'
+              END DO
+            END IF
+            CALL abort_code(c_err_bad_value)
+          ELSE
+            species_list(i)%spin_distribution = c_spin_directed
+            spin_mag = SQRT(spin_mag)
+            species_list(i)%spin_orientation(1) = species_list(i)%spin_orientation(1)/spin_mag
+            species_list(i)%spin_orientation(2) = species_list(i)%spin_orientation(2)/spin_mag
+            species_list(i)%spin_orientation(3) = species_list(i)%spin_orientation(3)/spin_mag
+          END IF
+        ELSE
+          IF (species_list(i)%spin_distribution == c_spin_directed) THEN
+            IF (rank == 0) THEN
+              DO iu = 1, nio_units ! Print to stdout and to file
+                io = io_units(iu)
+                WRITE(io,*) '*** ERROR ***'
+                WRITE(io,*) 'The species named "' // TRIM(species_list(i)%name) &
+                    // '" is missing the spin orientation.'
+              END DO
+            END IF
+            CALL abort_code(c_err_bad_value)
+          ELSE
+            species_list(i)%spin_distribution = c_spin_uniform
+          END IF
+        END IF
+      END DO
+#endif
+
+
+
       IF (track_ejected_particles) THEN
         ALLOCATE(ejected_list(n_species))
         ejected_list = species_list
@@ -263,7 +335,11 @@ CONTAINS
     IF (deck_state == c_ds_first) RETURN
     species_id = species_blocks(current_block)
     offset = 0
-
+#ifdef SPIN
+    species_spin_distribution = c_spin_null
+    species_spin_orientation = (/0.0_num, 0.0_num, 0.0_num/)
+    species_anomalous_magnetic_moment = -1
+#endif
   END SUBROUTINE species_block_start
 
 
@@ -303,6 +379,11 @@ CONTAINS
       auto_electrons(n_species) = unique_electrons
       bc_particle_array(:, n_species) = species_bc_particle
       release_species(n_species) = release_species_list
+#ifdef SPIN
+      spin_distribution(n_species) = species_spin_distribution
+      spin_orientation(:, n_species) = species_spin_orientation
+      anomalous_magnetic_moment(n_species) = species_anomalous_magnetic_moment
+#endif
     END IF
 
   END SUBROUTINE species_block_end
@@ -450,6 +531,33 @@ CONTAINS
     IF (str_cmp(element, 'bc_z_max')) THEN
       RETURN
     END IF
+
+#ifdef SPIN
+    IF (str_cmp(element, 'spin')) THEN
+      species_spin_distribution = as_spin_distribution_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'spin_x')) THEN
+      species_spin_orientation(1) = as_real_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'spin_y')) THEN
+      species_spin_orientation(2) = as_real_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'spin_z')) THEN
+      species_spin_orientation(3) = as_real_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'anomalous_magnetic_moment')) THEN
+      species_anomalous_magnetic_moment = as_real_print(value, element, errcode)
+      RETURN
+    END IF
+#endif
 
     IF (deck_state == c_ds_first) RETURN
 
@@ -1171,7 +1279,11 @@ CONTAINS
     CALL grow_array(dumpmask_array, n_species)
     CALL grow_array(auto_electrons, n_species)
     CALL grow_array(bc_particle_array, 2*c_ndims, n_species)
-
+#ifdef SPIN
+    CALL grow_array(spin_distribution, n_species)
+    CALL grow_array(spin_orientation, 3, n_species)
+    CALL grow_array(anomalous_magnetic_moment, n_species)
+#endif
     species_names(n_species) = TRIM(name)
     ionise_to_species(n_species) = -1
     recombine_to_species(n_species) = -1
@@ -1189,6 +1301,11 @@ CONTAINS
     species_can_ionise(n_species) = .FALSE.
     species_can_recombine(n_species) = .FALSE.
     species_ionise_limit(n_species) = 1000
+#ifdef SPIN
+    spin_distribution(n_species) = species_spin_distribution
+    spin_orientation(:,n_species) = species_spin_orientation
+    anomalous_magnetic_moment(n_species) = species_anomalous_magnetic_moment
+#endif
 
     RETURN
 
@@ -1939,6 +2056,10 @@ CONTAINS
       species_list(species_id)%species_type = c_species_id_proton
       species_list(species_id)%atomic_no = 1
       species_list(species_id)%atomic_no_set = .TRUE.
+#ifdef SPIN
+      species_list(species_id)%anomalous_magnetic_moment &
+        = anomalous_mag_dipole_moment_proton_constant
+#endif
       RETURN
     END IF
 
@@ -1949,6 +2070,10 @@ CONTAINS
       species_list(species_id)%species_type = c_species_id_positron
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
+#ifdef SPIN
+      species_list(species_id)%anomalous_magnetic_moment &
+        = anomalous_mag_dipole_moment_electron_constant
+#endif
       RETURN
     END IF
 
@@ -2223,5 +2348,50 @@ CONTAINS
     errcode = IOR(errcode, c_err_bad_value)
 
   END SUBROUTINE identify_species
+
+
+
+#ifdef SPIN
+  FUNCTION as_spin_distribution(str_in, err)
+
+    ! Convert the species-block "spin" value to a spin-distribution code.
+    ! Lives here rather than in strings.f90 because strings.f90 is not
+    ! preprocessed, so an #ifdef there has no effect.
+    CHARACTER(*), INTENT(IN) :: str_in
+    INTEGER, INTENT(INOUT) :: err
+    INTEGER :: as_spin_distribution
+
+    as_spin_distribution = c_spin_uniform
+
+    IF (str_cmp(TRIM(ADJUSTL(str_in)), 'uniform')) THEN
+      as_spin_distribution = c_spin_uniform
+      RETURN
+    END IF
+
+    IF (str_cmp(TRIM(ADJUSTL(str_in)), 'directed')) THEN
+      as_spin_distribution = c_spin_directed
+      RETURN
+    END IF
+
+    err = IOR(err, c_err_bad_value)
+
+  END FUNCTION as_spin_distribution
+
+
+
+  FUNCTION as_spin_distribution_print(str_in, element, err) RESULT(res)
+
+    CHARACTER(*), INTENT(IN) :: str_in, element
+    INTEGER, INTENT(INOUT) :: err
+    INTEGER :: res
+
+    res = as_spin_distribution(str_in, err)
+
+    IF (.NOT.print_deck_constants .OR. rank /= 0) RETURN
+
+    WRITE(du,'(A,I9)') TRIM(element) // ' = ', res
+
+  END FUNCTION as_spin_distribution_print
+#endif
 
 END MODULE deck_species_block

@@ -20,7 +20,9 @@ MODULE helper
   USE partlist
   USE simple_io
   USE deltaf_loader
-
+#ifdef SPIN
+  USE spin
+#endif
   IMPLICIT NONE
 
   REAL(num), POINTER :: species_density(:,:)
@@ -160,6 +162,9 @@ CONTAINS
           current => current%next
         END DO
       END IF
+#endif
+#ifdef SPIN
+      CALL setup_particle_spin(species)
 #endif
     END DO
 
