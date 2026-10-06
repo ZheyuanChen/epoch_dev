@@ -144,6 +144,8 @@ CONTAINS
     REAL(num) :: spin_rotation_x, spin_rotation_y, spin_rotation_z  
     REAL(num) :: spin_spx, spin_spy, spin_spz
     REAL(num) :: spin_anomalous_magnetic_moment
+    ! Holder of the three omega coefficients in T-BMT
+    REAL(num) :: omega_B, omega_v, omega_E
 #endif
     TYPE(particle), POINTER :: current, next
     TYPE(particle_pointer_list), POINTER :: bnd_part_last, bnd_part_next
@@ -266,6 +268,12 @@ CONTAINS
       part_mc2 = c * part_mc
 #endif
 #endif
+      ! Spin is a particle_list property, so read the anomalous
+      ! magnetic dipole moments here
+#ifdef SPIN
+      spin_anomalous_magnetic_moment &
+          = species_list(ispecies)%anomalous_magnetic_moment
+#endif
       !DEC$ VECTOR ALWAYS
       DO ipart = 1, species_list(ispecies)%attached_list%count
         next => current%next
@@ -293,10 +301,7 @@ CONTAINS
         part_mc2 = c * part_mc
 #endif
 #endif
-#ifdef SPIN
-      spin_anomalous_magnetic_moment &
-          = species_list(ispecies)%anomalous_magnetic_moment
-#endif
+
         ! Copy the particle properties out for speed
         part_x  = current%part_pos(1) - x_grid_min_local
         part_y  = current%part_pos(2) - y_grid_min_local
@@ -455,6 +460,8 @@ CONTAINS
 
         ! Now update spin! T-BMT
         ! The current version only supports Boris pusher i believe
+        ! Also prob add a guard to detect those species that have
+        ! anomalous magnetic moment defined.
 #ifdef SPIN
         part_sx = current%spin(1)
         part_sy = current%spin(2)
@@ -489,9 +496,13 @@ CONTAINS
         !    - (v/c) (a gamma/(gamma + 1)) (v/c) . B]
         v_avg_dot_B = vx_avg * bx_part + vy_avg * by_part + vz_avg*bz_part
         
-        spin_f1 = part_q * (spin_anomalous_magnetic_moment + 1 / gamma_rel) / part_m
-        spin_f2 = part_q * spin_anomalous_magnetic_moment * gamma_rel &
-            / ((1.0_num + gamma_rel) * part_m)
+        omega_B = spin_anomalous_magnetic_moment + 1.0_num / gamma_rel
+        omega_v = spin_anomalous_magnetic_moment * gamma_rel &
+            / (1.0_num + gamma_rel)
+        omega_E = spin_anomalous_magnetic_moment + 1 / (1.0_num + gamma_rel)
+
+        spin_f1 = part_q * omega_B / part_m
+        spin_f2 = part_q * omega_v / part_m
         ! PRINT*, 'SPIN', dto2, gamma_rel, spin_f1, by_part, spin_f1 * by_part
         spin_rotation_x = - dtfac * (spin_f1 * ( bx_part &
             - (vy_avg * ez_part - vz_avg * ey_part) / c) &

@@ -2046,6 +2046,10 @@ CONTAINS
       species_list(species_id)%electron = .TRUE.
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
+#ifdef SPIN
+      species_list(species_id)%anomalous_magnetic_moment &
+        = anomalous_mag_dipole_moment_electron_constant
+#endif
       RETURN
     END IF
 

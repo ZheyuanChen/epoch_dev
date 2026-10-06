@@ -267,8 +267,9 @@ MODULE constants
   ! a_e and a_mu (the chi-independent constant version).
   ! The muon value is from Wikipedia
 #ifdef SPIN
+  ! Electron anomalous moment (independent of chi here: fine structure constant/2pi)
   REAL(num), PARAMETER :: anomalous_mag_dipole_moment_electron_constant = alpha/(2*pi)
-  REAL(num), PARAMETER :: anomalous_mag_dipole_moment_muon_constant = 0.001165920
+  REAL(num), PARAMETER :: anomalous_mag_dipole_moment_muon_constant = 0.001165920_num
   ! Proton anomalous moment (mu_p / mu_N - 1), CODATA 2018
   REAL(num), PARAMETER :: anomalous_mag_dipole_moment_proton_constant = &
       1.79284734463_num
