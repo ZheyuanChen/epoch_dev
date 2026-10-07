@@ -110,6 +110,11 @@ MODULE constants
   ! Marks an anomalous magnetic moment not (yet) set by the deck.
   ! Non-physical, unlike -1 (which means g = 0)
   REAL(num), PARAMETER :: c_anomalous_moment_unset = -HUGE(1.0_num)
+  ! Large-chi tail of a(chi)/a(0): f = s y (c0 + c1 y), y = chi^(-2/3)
+  ! (TABLES/gen_anomalous_moment_table.py prints these)
+  REAL(num), PARAMETER :: c_amm_tail0 = 0.51910910269057631_num
+  REAL(num), PARAMETER :: c_amm_tail1 = 0.75687263015135131_num
+
 #endif
 
 

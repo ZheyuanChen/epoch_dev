@@ -52,6 +52,8 @@ CONTAINS
     END IF
 #endif
 
+
+
   END SUBROUTINE qed_deck_initialise
 
 
@@ -77,6 +79,23 @@ CONTAINS
         CALL abort_code(c_err_io_error)
       END IF
     END IF
+
+    ! Check for chi-dependent anomalous moment table
+#if defined(SPIN) && defined(PHOTONS)
+    IF (rank == 0 .AND. use_qed) THEN
+      INQUIRE(file=TRIM(qed_table_location)//'/anomalous_moment.table'&
+          , exist=exists)
+      IF (.NOT.exists) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'Unable to find SPIN tables in the ', &
+              'directory "' // TRIM(qed_table_location) // '"'
+        END DO
+        CALL abort_code(c_err_io_error)
+      END IF
+    END IF
+#endif
 
     IF (use_qed) need_random_state = .TRUE.
 

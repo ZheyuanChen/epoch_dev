@@ -106,12 +106,11 @@ CONTAINS
 #endif
     ! Persistent IDs
     IF (any_persistent_subset) nvar = nvar+1
-! Spin: 3 for lepton spins
-! and 3 for polarisation???
-! Let's use 3 for now
+! spin (leptons) Stokes vector (photons)
 #ifdef SPIN
     nvar = nvar+3
 #endif
+
 
 
   END SUBROUTINE set_partlist_size

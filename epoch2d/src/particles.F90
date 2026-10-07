@@ -20,7 +20,7 @@ MODULE particles
 #ifdef PREFETCH
   USE prefetch
 #endif
-
+  USE spin
   IMPLICIT NONE
 
 CONTAINS
@@ -144,7 +144,8 @@ CONTAINS
     REAL(num) :: u_avg_dot_B, spin_f1, spin_f2, spin_f3, spin_f4
     REAL(num) :: spin_rotation_x, spin_rotation_y, spin_rotation_z
     REAL(num) :: spin_primex, spin_primey, spin_primez
-    REAL(num) :: spin_anomalous_magnetic_moment
+    REAL(num) :: spin_a0, spin_a, chi2, erx, ery, erz, b_dot_e
+    LOGICAL   :: chi_moment
     ! Holder of the three omega coefficients in T-BMT
     REAL(num) :: omega_B, omega_v, omega_E
 #endif
@@ -269,11 +270,14 @@ CONTAINS
       part_mc2 = c * part_mc
 #endif
 #endif
-      ! Spin is a particle_list property, so read the anomalous
-      ! magnetic dipole moments here
+      ! If qed is turned on, leptons should use chi_dependent
+        ! anomalous magentic dipole moment
 #ifdef SPIN
-      spin_anomalous_magnetic_moment &
-          = species_list(ispecies)%anomalous_magnetic_moment
+      spin_a0 = species_list(ispecies)%anomalous_magnetic_moment
+      ! a(chi) only for the species QED acts on, and only with the table
+      chi_moment = amm_table_loaded .AND. &
+          (species_list(ispecies)%species_type == c_species_id_electron &
+          .OR. species_list(ispecies)%species_type == c_species_id_positron)
 #endif
       !DEC$ VECTOR ALWAYS
       DO ipart = 1, species_list(ispecies)%attached_list%count
@@ -480,6 +484,22 @@ CONTAINS
         uy_avg = 0.5_num * (uym + uyp) / gamma_mid
         uz_avg = 0.5_num * (uzm + uzp) / gamma_mid
 
+        ! If use chi-dependent anomalous mag dipole moment, calculate
+        ! chi usuing velocities at half time step and then use the lookup
+        ! table to determine the anomalous moment.
+        IF (chi_moment) THEN
+          ! chi^2 = (gamma/E_s)^2 [(E + c beta x B)^2 - (beta.E)^2] at
+          ! n+1/2; field sums are unnormalised, hence fac
+          erx = ex_part + c * (uy_avg * bz_part - uz_avg * by_part)
+          ery = ey_part + c * (uz_avg * bx_part - ux_avg * bz_part)
+          erz = ez_part + c * (ux_avg * by_part - uy_avg * bx_part)
+          b_dot_e = ux_avg * ex_part + uy_avg * ey_part + uz_avg * ez_part
+          chi2 = (gamma_mid * fac / e_s)**2 &
+              * (erx**2 + ery**2 + erz**2 - b_dot_e**2)
+          spin_a = spin_a0 * anomalous_moment_factor(chi2)
+        ELSE
+          spin_a = spin_a0
+        END IF
 
         ! Arc midpoint method -- inconsistent with HC and also more
         ! expensive. Kept here for reference
@@ -508,10 +528,10 @@ CONTAINS
         !    + (tau_half_z * tau_half_y - tau_half_x) * uym)) * tau) / gamma_mid
 
         ! The three omega coefficients in Qian (2.46)
-        omega_B = spin_anomalous_magnetic_moment + 1.0_num / gamma_mid
-        omega_v = spin_anomalous_magnetic_moment * gamma_mid &
+        omega_B = spin_a + 1.0_num / gamma_mid
+        omega_v = spin_a * gamma_mid &
             / (1.0_num + gamma_mid)
-        omega_E = spin_anomalous_magnetic_moment + 1.0_num / (1.0_num &
+        omega_E = spin_a + 1.0_num / (1.0_num &
             + gamma_mid)
 
         ! Multiply by q/mc
