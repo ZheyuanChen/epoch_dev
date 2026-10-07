@@ -1,0 +1,110 @@
+# Spin restart test (-DSPIN).
+#
+# A run that stops at dump 5 and restarts from it must continue exactly
+# as the uninterrupted run, so spin (leptons) and polarisation (photons)
+# must be read back from the restart dump. Every particle has its own
+# spin history, so a restart that loses or scrambles spins cannot pass:
+#   electron   thermal (100 keV), isotropic random spins (spin = uniform):
+#              each particle precesses at its own rate about B
+#   positron   thermal, every spin starting along y
+#   pol        10 MeV photons along (1, 1, 0) with a polarisation vector
+#   unpol      the same photons with no polarisation settings
+# B = 2000 T along z and 0.5 * 2000 T along x, so the precession axis is
+# not a coordinate axis and all spin components change. QED is on (the
+# a(chi) table path) but without recoil or emission, so the run is
+# deterministic and restarted particles can be matched by position.
+begin:constant
+  cell = 0.1 * micron
+  b0 = 2000.0
+  # 10 MeV photons along (1, 1, 0) / sqrt(2)
+  p_ph = 1.0e7 * qe / c / sqrt(2)
+end:constant
+
+begin:control
+  nx = 32
+  ny = 32
+  x_min = 0
+  x_max = 32 * cell
+  y_min = 0
+  y_max = 32 * cell
+  t_end = 20 * femto
+  stdout_frequency = 1000
+end:control
+
+begin:boundaries
+  bc_x_min = periodic
+  bc_x_max = periodic
+  bc_y_min = periodic
+  bc_y_max = periodic
+end:boundaries
+
+begin:fields
+  bx = 0.5 * b0
+  bz = b0
+end:fields
+
+begin:qed
+  use_qed = T
+  qed_start_time = 0
+  produce_photons = F
+  produce_pairs = F
+  use_radiation_reaction = F
+  photon_dynamics = T
+end:qed
+
+begin:species
+  name = electron
+  identify:electron
+  nparticles = 2000
+  number_density = 1.0
+  temperature_ev = 1.0e5
+  spin = uniform
+end:species
+
+begin:species
+  name = positron
+  identify:positron
+  nparticles = 2000
+  number_density = 1.0
+  temperature_ev = 1.0e5
+  spin = directed
+  spin_x = 0
+  spin_y = 1
+  spin_z = 0
+end:species
+
+begin:species
+  name = pol
+  identify:photon
+  nparticles = 1000
+  number_density = 1.0
+  temperature = 0
+  drift_x = p_ph
+  drift_y = p_ph
+  spin_x = 0.3
+  spin_y = 0.1
+  spin_z = -0.6
+end:species
+
+begin:species
+  name = unpol
+  identify:photon
+  nparticles = 1000
+  number_density = 1.0
+  temperature = 0
+  drift_x = p_ph
+  drift_y = p_ph
+end:species
+
+begin:output
+  dt_snapshot = 2 * femto
+  # dumps 0, 5 and 10 are restart dumps
+  restart_dump_every = 5
+  particles = always
+  px = always
+  py = always
+  pz = always
+  spin_x = always
+  spin_y = always
+  spin_z = always
+end:output

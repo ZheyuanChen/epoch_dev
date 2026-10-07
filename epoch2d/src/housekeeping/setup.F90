@@ -1438,7 +1438,45 @@ CONTAINS
           CALL abort_code(c_err_pp_options_missing)
           STOP
 #endif
-
+        ELSE IF (block_id(1:7) == 'spin_x/') THEN
+#ifdef SPIN
+          CALL sdf_read_point_variable(sdf_handle, npart_local, &
+              species_subtypes(ispecies), it_spin_x)
+#else
+          IF (rank == 0) THEN
+            PRINT*, '*** ERROR ***'
+            PRINT*, 'Cannot load dump file with spin.'
+            PRINT*, 'Please recompile with the -DSPIN option.'
+          END IF
+          CALL abort_code(c_err_pp_options_missing)
+          STOP
+#endif
+        ELSE IF (block_id(1:7) == 'spin_y/') THEN
+#ifdef SPIN
+          CALL sdf_read_point_variable(sdf_handle, npart_local, &
+              species_subtypes(ispecies), it_spin_y)
+#else
+          IF (rank == 0) THEN
+            PRINT*, '*** ERROR ***'
+            PRINT*, 'Cannot load dump file with spin.'
+            PRINT*, 'Please recompile with the -DSPIN option.'
+          END IF
+          CALL abort_code(c_err_pp_options_missing)
+          STOP
+#endif
+        ELSE IF (block_id(1:7) == 'spin_z/') THEN
+#ifdef SPIN
+          CALL sdf_read_point_variable(sdf_handle, npart_local, &
+              species_subtypes(ispecies), it_spin_z)
+#else
+          IF (rank == 0) THEN
+            PRINT*, '*** ERROR ***'
+            PRINT*, 'Cannot load dump file with spin.'
+            PRINT*, 'Please recompile with the -DSPIN option.'
+          END IF
+          CALL abort_code(c_err_pp_options_missing)
+          STOP
+#endif
         ELSE IF (block_id(1:23) == 'time_integrated_work_x/') THEN
 #ifdef WORK_DONE_INTEGRATED
           CALL sdf_read_point_variable(sdf_handle, npart_local, &
