@@ -689,9 +689,11 @@ CONTAINS
     new_particle%rate_rr = 0.0_num
     new_particle%rate_3br = 0.0_num
 #endif
-! Spin
+! Default spin for created particles
+! Set to 0 such that newly created photons
+! are unpolarised.
 #ifdef SPIN
-    new_particle%spin = (/0.0, 0.0, 1.0/)
+    new_particle%spin = (/0.0, 0.0, 0.0/)
 #endif
 
   END SUBROUTINE init_particle
