@@ -624,13 +624,16 @@ CONTAINS
 
   ! Spin: the name should match that defined in constants
 #ifdef SPIN
-    ELSE IF (str_cmp(element, 'spin_x')) THEN
+    ELSE IF (str_cmp(element, 'spin_x') &
+          .OR. str_cmp(element, 'polarisation_x')) THEN
       elementselected = c_dump_part_spin_x
 
-    ELSE IF (str_cmp(element, 'spin_y')) THEN
+    ELSE IF (str_cmp(element, 'spin_y') &
+          .OR. str_cmp(element, 'polarisation_y')) THEN
       elementselected = c_dump_part_spin_y
 
-    ELSE IF (str_cmp(element, 'spin_z')) THEN
+    ELSE IF (str_cmp(element, 'spin_z') &
+          .OR. str_cmp(element, 'polarisation_z')) THEN
       elementselected = c_dump_part_spin_z
 #endif
 

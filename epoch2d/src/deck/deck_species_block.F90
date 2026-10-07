@@ -254,6 +254,11 @@ CONTAINS
         CALL abort_code(c_err_bad_value)
       END DO
 
+
+
+
+
+      
       ! This sanity check is added by Holger. Need to check
 #ifdef SPIN
       DO i = 1, n_species
@@ -262,6 +267,8 @@ CONTAINS
           + species_list(i)%spin_orientation(2)**2 &
           + species_list(i)%spin_orientation(3)**2
         
+
+
         IF (spin_mag > 0.0_num) THEN
           IF (species_list(i)%spin_distribution == c_spin_uniform) THEN
             IF (rank == 0) THEN
@@ -557,22 +564,22 @@ CONTAINS
     END IF
 
 #ifdef SPIN
-    IF (str_cmp(element, 'spin')) THEN
+    IF (str_cmp(element, 'spin') .OR. str_cmp(element, 'polarisation')) THEN
       species_spin_distribution = as_spin_distribution_print(value, element, errcode)
       RETURN
     END IF
 
-    IF (str_cmp(element, 'spin_x')) THEN
+    IF (str_cmp(element, 'spin_x') .OR. str_cmp(element, 'polarisation_x')) THEN
       species_spin_orientation(1) = as_real_print(value, element, errcode)
       RETURN
     END IF
 
-    IF (str_cmp(element, 'spin_y')) THEN
+    IF (str_cmp(element, 'spin_y') .OR. str_cmp(element, 'polarisation_y')) THEN
       species_spin_orientation(2) = as_real_print(value, element, errcode)
       RETURN
     END IF
 
-    IF (str_cmp(element, 'spin_z')) THEN
+    IF (str_cmp(element, 'spin_z') .OR. str_cmp(element, 'polarisation_z')) THEN
       species_spin_orientation(3) = as_real_print(value, element, errcode)
       RETURN
     END IF
