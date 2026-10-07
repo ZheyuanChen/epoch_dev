@@ -25,10 +25,19 @@ MODULE spin
   USE constants
   USE shared_data
   USE random_generator
-
+  USE utilities
   IMPLICIT NONE
 
+  ! a(chi)/a(0) on a uniform log10(chi) grid (anomalous_moment.table);
+  ! amm_table_loaded is set once the table has been read (use_qed only)
+  LOGICAL :: amm_table_loaded = .FALSE.
+  INTEGER :: n_amm
+  REAL(num) :: amm_log_chi_min, amm_log_chi_max, amm_idlog
+  REAL(num) :: amm_chi2_min, amm_tail_scale
+  REAL(num), ALLOCATABLE :: amm_log_f(:)
+
 CONTAINS
+
 
   SUBROUTINE setup_particle_spin(part_species)
     TYPE(particle_species), POINTER :: part_species
@@ -85,6 +94,93 @@ CONTAINS
     new_particle%spin = (/ sx, sy, sz /)
   END SUBROUTINE init_particle_spin_uniform
   
+
+
+  ! Read chi-dependent anomalous_moment from 
+  ! anomalous_moment.table
+  ! rank 0 reads the table then broadcasts
+  ! Note that bisection search is not needed because
+  ! the table is generated on a uniform grid (log chi)
+  ! This is called in photons.f90 so no need to do ifdef here
+  SUBROUTINE setup_anomalous_moment_table
+
+    INTEGER :: i
+    REAL(num) :: log_chi, dlog, buf(2), y
+
+    IF (rank == 0) THEN
+      OPEN(unit=lu, file=TRIM(qed_table_location) &
+          // '/anomalous_moment.table', status='OLD')
+      READ(lu,*) n_amm, amm_log_chi_min, amm_log_chi_max
+      ALLOCATE(amm_log_f(n_amm))
+      dlog = (amm_log_chi_max - amm_log_chi_min) / (n_amm - 1)
+      DO i = 1, n_amm
+        READ(lu,*) log_chi, amm_log_f(i)
+        ! The direct-index lookup assumes a uniform grid
+        IF (ABS(log_chi - amm_log_chi_min - (i - 1) * dlog) > 1.0e-8_num) &
+            CALL abort_code(c_err_bad_value)
+      END DO
+      CLOSE(unit=lu)
+    END IF
+
+    CALL MPI_BCAST(n_amm, 1, MPI_INTEGER, 0, comm, errcode)
+    buf = (/ amm_log_chi_min, amm_log_chi_max /)
+    CALL MPI_BCAST(buf, 2, mpireal, 0, comm, errcode)
+    amm_log_chi_min = buf(1)
+    amm_log_chi_max = buf(2)
+    IF (rank /= 0) ALLOCATE(amm_log_f(n_amm))
+    CALL MPI_BCAST(amm_log_f, n_amm, mpireal, 0, comm, errcode)
+
+    amm_idlog = (n_amm - 1) / (amm_log_chi_max - amm_log_chi_min)
+    amm_chi2_min = 10.0_num**(2.0_num * amm_log_chi_min)
+    ! Scale the analytic tail so it meets the last table entry
+    y = 10.0_num**(-2.0_num * amm_log_chi_max / 3.0_num)
+    amm_tail_scale = 10.0_num**amm_log_f(n_amm) &
+        / (y * (c_amm_tail0 + c_amm_tail1 * y))
+    amm_table_loaded = .TRUE.
+
+  END SUBROUTINE setup_anomalous_moment_table
+
+
+
+  SUBROUTINE deallocate_spin_tables
+    DEALLOCATE(amm_log_f)
+  END SUBROUTINE deallocate_spin_tables
+
+
+  ! FUnction for using anomalous_moment.table
+  FUNCTION anomalous_moment_factor(chi2) RESULT(f)
+
+    ! a(chi)/a(0) for chi^2 = chi2: 1 below the table, log-log linear
+    ! interpolation inside it, scaled two-term asymptote above it
+    REAL(num), INTENT(IN) :: chi2
+    REAL(num) :: f, x, w, y
+    INTEGER :: i
+
+    IF (chi2 <= amm_chi2_min) THEN
+      f = 1.0_num
+      RETURN
+    END IF
+
+    ! log10(chi) straight from chi^2: no SQRT needed
+    x = 0.5_num * LOG10(chi2)
+    ! Upper truncation: use large-chi expansion
+    ! Note: if upper truncation is needed, the Ritus-Narozhny 
+    ! condition has already broken down and the loop contribution
+    ! won't be valid. 
+    IF (x >= amm_log_chi_max) THEN
+      y = chi2**(-1.0_num / 3.0_num)
+      f = amm_tail_scale * y * (c_amm_tail0 + c_amm_tail1 * y)
+    ELSE
+      w = (x - amm_log_chi_min) * amm_idlog
+      i = INT(w)
+      w = w - i
+      i = i + 1
+      f = 10.0_num**((1.0_num - w) * amm_log_f(i) + w * amm_log_f(i+1))
+    END IF
+
+  END FUNCTION anomalous_moment_factor
+
+
 #endif
 
 END MODULE spin

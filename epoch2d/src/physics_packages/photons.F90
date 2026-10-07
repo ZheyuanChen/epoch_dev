@@ -19,7 +19,7 @@ MODULE photons
   USE collisions
   USE partlist
   USE utilities
-
+  USE spin
   IMPLICIT NONE
 
   REAL(num), PRIVATE :: sig2cdt_dV_lbw
@@ -456,7 +456,10 @@ CONTAINS
 
       DEALLOCATE(realbuf)
     END IF
-
+#ifdef SPIN
+      ! Table for a(chi)
+    CALL setup_anomalous_moment_table
+#endif
     log_omegahat(:,1) = log_tpair(:,1)
 
     ALLOCATE(log_eta(n_sample_eta))
@@ -490,6 +493,9 @@ CONTAINS
     DEALLOCATE(p_photon_energy)
     DEALLOCATE(log_tpair)
     DEALLOCATE(log_omegahat)
+#ifdef SPIN
+    CALL deallocate_spin_tables
+#endif
 
   END SUBROUTINE deallocate_tables_qed
 
