@@ -13,6 +13,13 @@ It then integrates the Lorentz force and the T-BMT equation together
 
 and overlays the closed-form predictions of each test.
 
+When the deck has use_qed = T, species identified as electrons or
+positrons use the chi-dependent moment a f(chi) in EPOCH
+(TABLES/anomalous_moment.table). The reference then uses a f(chi0), with
+f from the exact quadrature in TABLES/gen_anomalous_moment_table.py (not
+the table) and chi0 from the initial state. That is exact only while chi
+is constant, as in test 5 (v perp uniform B, E = 0).
+
 Usage:
     python analyse.py              # figures for the hc/boris runs
     python analyse.py --scan       # also the dt-convergence figure
@@ -37,7 +44,12 @@ M0 = 9.10938291e-31
 C = 2.99792458e8
 QE, ME = -Q0, M0          # every test species is an electron
 
+# Schwinger field e_s (V/m), EPOCH's value
+E_S = 1.323285417001326061279735961512150e18
+
 HERE = os.path.dirname(os.path.abspath(__file__))
+TABLES = os.path.join(HERE, '..', '..', '..', 'src', 'physics_packages',
+                      'TABLES')
 FIGDIR = os.path.join(HERE, 'figures')
 PUSHERS = {'hc': ('Higuera-Cary', 'C0'), 'boris': ('Boris', 'C3')}
 
@@ -54,7 +66,8 @@ def deck_moments(deck):
             line = line.split('#')[0].strip()
             if '=' in line:
                 k, v = (s.strip() for s in line.split('=', 1))
-                ns[k] = eval(v, {}, ns)
+                # EPOCH writes powers as ^
+                ns[k] = eval(v.replace('^', '**'), {}, ns)
     out = {}
     for blk in re.findall(r'begin:species(.*?)end:species', text, re.S):
         name = re.search(r'^\s*name\s*=\s*(\S+)', blk, re.M).group(1)
@@ -62,6 +75,43 @@ def deck_moments(deck):
                       re.M).group(1)
         out[name] = float(eval(a, {}, ns))
     return out
+
+
+def deck_chi_dependent(deck):
+    """Species that EPOCH gives a(chi): use_qed on and identified as an
+    electron or positron (species_type electron/positron)."""
+    text = open(deck).read()
+    qed = re.search(r'^\s*use_qed\s*=\s*T', text, re.M | re.I) is not None
+    out = {}
+    for blk in re.findall(r'begin:species(.*?)end:species', text, re.S):
+        name = re.search(r'^\s*name\s*=\s*(\S+)', blk, re.M).group(1)
+        lepton = re.search(r'^\s*identify\s*:\s*\S*(electron|positron)\s*$',
+                           blk, re.M | re.I) is not None
+        out[name] = qed and lepton
+    return out
+
+
+def chi_of(u, E, B):
+    """Quantum parameter chi for normalised momentum u (electron mass)."""
+    g = np.sqrt(1.0 + u @ u)
+    b = u / g
+    er = E + C * np.cross(b, B)
+    return g / E_S * np.sqrt(max(er @ er - (b @ E)**2, 0.0))
+
+
+def f_exact(chi):
+    """a(chi)/a(0) by quadrature, from the table generator."""
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, TABLES)
+    import gen_anomalous_moment_table as gen
+    return gen.ratio(chi)
+
+
+def f_table(chi):
+    """a(chi)/a(0) as EPOCH looks it up (log-log linear in the table)."""
+    tab = np.loadtxt(os.path.join(TABLES, 'anomalous_moment.table'),
+                     skiprows=1)
+    return 10.0**np.interp(np.log10(chi), tab[:, 0], tab[:, 1])
 
 
 def load_run(rdir):
@@ -94,7 +144,13 @@ def load_run(rdir):
     # have time = step * dt, so rebuild every time from the step count
     k = np.argmax(steps)
     dt = times[k] / steps[k]
-    return dict(t=steps * dt, dt=dt, E=E, B=B, a=moments, spread=spread,
+    # Effective moment for the reference: a f(chi0) where EPOCH uses a(chi)
+    chi_dep = deck_chi_dependent(os.path.join(rdir, 'input.deck'))
+    chi0 = {s: chi_of(np.array(u[s][0]), E, B) for s in moments}
+    a_eff = {s: moments[s] * (f_exact(chi0[s]) if chi_dep[s] else 1.0)
+             for s in moments}
+    return dict(t=steps * dt, dt=dt, E=E, B=B, a=moments, a_eff=a_eff,
+                chi_dep=chi_dep, chi0=chi0, spread=spread,
                 u={s: np.array(v) for s, v in u.items()},
                 S={s: np.array(v) for s, v in S.items()})
 
@@ -103,7 +159,7 @@ def load_run(rdir):
 
 def reference(run, s):
     """Exact (to ODE tolerance) u(t), S(t) for species s of a run."""
-    E, B, a = run['E'], run['B'], run['a'][s]
+    E, B, a = run['E'], run['B'], run['a_eff'][s]
 
     def rhs(_, y):
         u, S = y[:3], y[3:]
@@ -188,7 +244,7 @@ def summary(test, runs, species):
                                    axis=1).max()
             print('  %-6s %-13s a=%-10.4g max|S-S_ref|=%.2e  '
                   'max|S-S0|=%.3f  spread=%.1e'
-                  % (label, s, run['a'][s], err, drift, run['spread']))
+                  % (label, s, run['a_eff'][s], err, drift, run['spread']))
 
 
 # ------------------------------------------------------------------ tests
@@ -384,6 +440,69 @@ def test4():
     summary('test4', runs, species)
 
 
+def test5():
+    runs = runs_for('test5_chi_dependent_moment')
+    run = runs['hc']
+    t = run['t']
+    species = ['lepton', 'generic']
+    z = np.array([0.0, 0.0, 1.0])
+    x = np.array([1.0, 0.0, 0.0])
+    B = run['B'][2]
+    a = run['a']['lepton']
+    chi0 = run['chi0']['lepton']
+    fe, ft = f_exact(chi0), f_table(chi0)
+
+    fig, ax = plt.subplots(2, 2, figsize=(11, 8))
+    plot_components(ax[0, 0], run, 'lepton',
+                    r'lepton, $a_e f(\chi)$ (HC; lines ref, circles EPOCH)')
+    ax[0, 0].legend(fontsize=7, loc='lower left')
+
+    print('Test 5: chi-dependent anomalous moment')
+    print('  chi0 = %.6f   f exact = %.6f   f table = %.6f'
+          % (chi0, fe, ft))
+    rates = {}
+    for j, s in enumerate(species):
+        g2 = (plane_angle(run['S'][s], z, x)
+              - plane_angle(run['u'][s], z, x))
+        rates[s] = np.polyfit(t, g2, 1)[0]
+        expect = -QE / ME * run['a_eff'][s] * B
+        ax[0, 1].plot(t * 1e15, -QE / ME * run['a_eff'][s] * B * t,
+                      '-', color='C%d' % j, lw=1)
+        ax[0, 1].plot(t[::4] * 1e15, g2[::4], 'o', ms=3, mfc='none',
+                      color='C%d' % j, label='%s (%s)' % (
+                          s, r'$a_e f(\chi)$' if run['chi_dep'][s]
+                          else r'$a_e$'))
+        print('  %-8s g-2 rate EPOCH %.6e  -(q/m) a_eff B %.6e  '
+              'rel diff %.1e' % (s, rates[s], expect, rates[s] / expect - 1))
+    ratio = rates['lepton'] / rates['generic']
+    print('  rate ratio lepton/generic %.6f  vs f(chi0) %.6f  '
+          'rel diff %.1e' % (ratio, fe, ratio / fe - 1))
+    ax[0, 1].set_xlabel('t (fs)')
+    ax[0, 1].set_ylabel('spin angle - momentum angle (rad)')
+    ax[0, 1].set_title(r'g-2 phase; lines: $-(q/m)\,a_{eff}B\,t$',
+                       fontsize=10)
+    ax[0, 1].legend(fontsize=8)
+
+    tab = np.loadtxt(os.path.join(TABLES, 'anomalous_moment.table'),
+                     skiprows=1)
+    ax[1, 0].semilogx(10**tab[:, 0], 10**tab[:, 1], 'k-', lw=1,
+                      label='anomalous_moment.table')
+    ax[1, 0].semilogx([chi0], [ratio], 'o', color='C3', ms=7,
+                      label='EPOCH: g-2 rate ratio (%.5f)' % ratio)
+    ax[1, 0].set_xlabel(r'$\chi$')
+    ax[1, 0].set_ylabel(r'$a(\chi)/a(0)$')
+    ax[1, 0].set_title('rate ratio lepton/generic vs the table', fontsize=10)
+    ax[1, 0].legend(fontsize=8)
+    plot_errors(ax[1, 1], runs, species)
+    fig.suptitle(r'Test 5: $a(\chi)$ with QED on ($\chi$ = %.3f, '
+                 r'$\gamma$ = %g, B = %.3g T)'
+                 % (chi0, gamma(run['u']['lepton'][0]), B))
+    fig.tight_layout()
+    fig.savefig(os.path.join(FIGDIR, 'test5_chi_dependent_moment.png'),
+                dpi=130)
+    summary('test5', runs, species)
+
+
 # ------------------------------------------------------------ dt scan
 
 def scan():
@@ -391,7 +510,9 @@ def scan():
     cases = [('test1_B_perp_v', 'transverse', 'test 1'),
              ('test2_B_par_v', 'a_one', r'test 2, $a=1$'),
              ('test4_E_perp_v', 'a_electron', r'test 4, $a=a_e$'),
-             ('test4_E_perp_v', 'a_one', r'test 4, $a=1$')]
+             ('test4_E_perp_v', 'a_one', r'test 4, $a=1$'),
+             ('test5_chi_dependent_moment', 'lepton',
+              r'test 5, $a_e f(\chi)$')]
     fig, axs = plt.subplots(1, len(cases), figsize=(4 * len(cases), 4),
                             sharey=True)
     print('dt scan: final-time |S - S_ref|')
@@ -432,5 +553,6 @@ if __name__ == '__main__':
     test2()
     test3()
     test4()
+    test5()
     if '--scan' in sys.argv:
         scan()

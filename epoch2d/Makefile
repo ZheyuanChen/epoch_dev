@@ -551,9 +551,9 @@ particle_migration.o: particle_migration.F90 calc_df.o partlist.o prefetch.o
 particle_pointer_advance.o: particle_pointer_advance.f90 shared_data.o
 particle_temperature.o: particle_temperature.F90 constants.o evaluate.o \
   random_generator.o
-particles.o: particles.F90 boundary.o partlist.o prefetch.o
+particles.o: particles.F90 boundary.o partlist.o prefetch.o spin.o
 partlist.o: partlist.F90 particle_id_hash.o random_generator.o shared_data.o
-photons.o: photons.F90 collisions.o partlist.o utilities.o
+photons.o: photons.F90 collisions.o partlist.o utilities.o spin.o
 prefetch.o: prefetch.F90 shared_data.o
 probes.o: probes.F90 partlist.o $(SDFMOD)
 random_generator.o: random_generator.f90
@@ -567,7 +567,7 @@ shape_functions.o: shape_functions.F90 constants.o
 shared_data.o: shared_data.F90 constants.o $(SDFMOD)
 shunt.o: shunt.F90 evaluator_blocks.o tokenizer_blocks.o utilities.o
 simple_io.o: simple_io.F90 boundary.o mpi_subtype_control.o
-spin.o: spin.F90 random_generator.o shared_data.o
+spin.o: spin.F90 random_generator.o shared_data.o utilities.o
 stack.o: stack.f90 constants.o
 strings.o: strings.f90 shared_data.o
 strings_advanced.o: strings_advanced.f90 evaluate.o shunt.o

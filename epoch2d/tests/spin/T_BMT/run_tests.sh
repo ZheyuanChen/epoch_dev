@@ -5,6 +5,8 @@
 #
 # Each test's input.deck is copied to <test>/run_LABEL/ and run there.
 # DX_SCALE multiplies the cell size, and hence dt (CFL), for a dt scan.
+# The binary's src/ is linked into each run directory so that the default
+# table paths (qed_table_location etc.) resolve, as job_epoch does.
 # Examples:
 #   ./run_tests.sh hc                         # default binary (HC_PUSH)
 #   ./run_tests.sh boris /path/to/boris/epoch2d
@@ -22,8 +24,9 @@ for deck in "$here"/test*/input.deck; do
   rdir=$tdir/run_$label
   rm -rf "$rdir"
   mkdir -p "$rdir"
-  sed "s/^  cell = 0.2 \* micron/  cell = 0.2 * $scale * micron/" "$deck" \
-    > "$rdir/input.deck"
+  sed "s/^  cell = \([0-9.]*\) \* micron/  cell = \1 * $scale * micron/" \
+    "$deck" > "$rdir/input.deck"
+  ln -s "$(dirname "$epoch")/../src" "$rdir/src"
   echo "== $(basename "$tdir") [$label, dx x $scale]"
   (cd "$rdir" && echo . | mpirun -n "$nprocs" "$epoch" > epoch.log 2>&1) \
     || { echo "   FAILED, see $rdir/epoch.log"; exit 1; }
