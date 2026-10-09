@@ -254,52 +254,92 @@ CONTAINS
         CALL abort_code(c_err_bad_value)
       END DO
 
-
-
-
-
-      
-      ! This sanity check is added by Holger. Need to check
 #ifdef SPIN
+      ! Sanitise the spin (leptons) and polarisation (photons) settings
       DO i = 1, n_species
-        ! sanitise particle spin configuration
+        ! Squared length of the deck vector
         spin_mag = species_list(i)%spin_orientation(1)**2 &
-          + species_list(i)%spin_orientation(2)**2 &
-          + species_list(i)%spin_orientation(3)**2
-        
+            + species_list(i)%spin_orientation(2)**2 &
+            + species_list(i)%spin_orientation(3)**2
 
-
-        IF (spin_mag > 0.0_num) THEN
+        IF (species_list(i)%species_type == c_species_id_photon) THEN
+          ! Photon polarisation: |P| <= 1, kept as given (not normalised);
+          ! no settings leaves c_spin_null, i.e. unpolarised (P = 0)
           IF (species_list(i)%spin_distribution == c_spin_uniform) THEN
             IF (rank == 0) THEN
               DO iu = 1, nio_units ! Print to stdout and to file
                 io = io_units(iu)
                 WRITE(io,*) '*** ERROR ***'
-                WRITE(io,*) 'The species named "' // TRIM(species_list(i)%name) &
-                    // '" has conflicting spin configuration.'
+                WRITE(io,*) 'The photon species named "' &
+                    // TRIM(species_list(i)%name) &
+                    // '" cannot use "spin = uniform".'
+                WRITE(io,*) 'Leave the polarisation unset for an ', &
+                    'unpolarised species.'
               END DO
             END IF
             CALL abort_code(c_err_bad_value)
-          ELSE
-            species_list(i)%spin_distribution = c_spin_directed
-            spin_mag = SQRT(spin_mag)
-            species_list(i)%spin_orientation(1) = species_list(i)%spin_orientation(1)/spin_mag
-            species_list(i)%spin_orientation(2) = species_list(i)%spin_orientation(2)/spin_mag
-            species_list(i)%spin_orientation(3) = species_list(i)%spin_orientation(3)/spin_mag
-          END IF
-        ELSE
-          IF (species_list(i)%spin_distribution == c_spin_directed) THEN
+          ELSE IF (spin_mag > 1.0_num + 1.0e-12_num) THEN
+            ! The tolerance admits typed unit vectors such as (0.6, 0.8, 0)
             IF (rank == 0) THEN
               DO iu = 1, nio_units ! Print to stdout and to file
                 io = io_units(iu)
                 WRITE(io,*) '*** ERROR ***'
-                WRITE(io,*) 'The species named "' // TRIM(species_list(i)%name) &
-                    // '" is missing the spin orientation.'
+                WRITE(io,*) 'The photon species named "' &
+                    // TRIM(species_list(i)%name) &
+                    // '" has a polarisation vector longer than 1.'
               END DO
             END IF
             CALL abort_code(c_err_bad_value)
+          ELSE IF (spin_mag > 0.0_num) THEN
+            species_list(i)%spin_distribution = c_spin_directed
+          ELSE IF (species_list(i)%spin_distribution == c_spin_directed) THEN
+            IF (rank == 0) THEN
+              DO iu = 1, nio_units ! Print to stdout and to file
+                io = io_units(iu)
+                WRITE(io,*) '*** ERROR ***'
+                WRITE(io,*) 'The photon species named "' &
+                    // TRIM(species_list(i)%name) &
+                    // '" is missing the polarisation vector.'
+              END DO
+            END IF
+            CALL abort_code(c_err_bad_value)
+          END IF
+
+        ELSE
+          ! Leptons and other species: spin is a unit vector
+          IF (spin_mag > 0.0_num) THEN
+            IF (species_list(i)%spin_distribution == c_spin_uniform) THEN
+              IF (rank == 0) THEN
+                DO iu = 1, nio_units ! Print to stdout and to file
+                  io = io_units(iu)
+                  WRITE(io,*) '*** ERROR ***'
+                  WRITE(io,*) 'The species named "' &
+                      // TRIM(species_list(i)%name) &
+                      // '" has conflicting spin configuration.'
+                END DO
+              END IF
+              CALL abort_code(c_err_bad_value)
+            ELSE
+              species_list(i)%spin_distribution = c_spin_directed
+              spin_mag = SQRT(spin_mag)
+              species_list(i)%spin_orientation = &
+                  species_list(i)%spin_orientation / spin_mag
+            END IF
           ELSE
-            species_list(i)%spin_distribution = c_spin_uniform
+            IF (species_list(i)%spin_distribution == c_spin_directed) THEN
+              IF (rank == 0) THEN
+                DO iu = 1, nio_units ! Print to stdout and to file
+                  io = io_units(iu)
+                  WRITE(io,*) '*** ERROR ***'
+                  WRITE(io,*) 'The species named "' &
+                      // TRIM(species_list(i)%name) &
+                      // '" is missing the spin orientation.'
+                END DO
+              END IF
+              CALL abort_code(c_err_bad_value)
+            ELSE
+              species_list(i)%spin_distribution = c_spin_uniform
+            END IF
           END IF
         END IF
 
