@@ -17,6 +17,9 @@ MODULE file_injectors
 
   USE partlist
   USE utilities
+#ifdef SPIN
+  USE spin
+#endif
 
   IMPLICIT NONE
 
@@ -417,6 +420,10 @@ CONTAINS
       new%part_p(1) = px_in
       new%part_p(2) = py_in
       new%part_p(3) = pz_in
+#ifdef SPIN
+      CALL init_particle_spin(species_list(injector%species), new)
+#endif
+
 #ifdef PER_PARTICLE_CHARGE_MASS
       new%charge = species_list(injector%species)%charge
       new%mass = mass

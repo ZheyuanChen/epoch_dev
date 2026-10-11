@@ -2049,7 +2049,7 @@ CONTAINS
 #endif
 
 #ifdef SPIN
-  FUNCTION it_spin_x
+  FUNCTION it_spin_x(array, npart_this_it, start, param)
 
     REAL(num) :: it_spin_x
     REAL(num), DIMENSION(:), INTENT(IN) :: array
@@ -2066,7 +2066,7 @@ CONTAINS
     it_spin_x = 0
   END FUNCTION it_spin_x
 
-  FUNCTION it_spin_y
+  FUNCTION it_spin_y(array, npart_this_it, start, param)
 
     REAL(num) :: it_spin_y
     REAL(num), DIMENSION(:), INTENT(IN) :: array
@@ -2076,14 +2076,14 @@ CONTAINS
     INTEGER :: ipart
 
     DO ipart = 1, npart_this_it
-      iterator_list%spin(1) = array(ipart)
+      iterator_list%spin(2) = array(ipart)
       iterator_list => iterator_list%next
     END DO
 
     it_spin_y = 0
   END FUNCTION it_spin_y
   
-  FUNCTION it_spin_z
+  FUNCTION it_spin_z(array, npart_this_it, start, param)
 
     REAL(num) :: it_spin_z
     REAL(num), DIMENSION(:), INTENT(IN) :: array
@@ -2093,7 +2093,7 @@ CONTAINS
     INTEGER :: ipart
 
     DO ipart = 1, npart_this_it
-      iterator_list%spin(1) = array(ipart)
+      iterator_list%spin(3) = array(ipart)
       iterator_list => iterator_list%next
     END DO
 

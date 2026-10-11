@@ -703,6 +703,8 @@ CONTAINS
     REAL(num) :: beta_x, beta_y, beta_z
     REAL(num) :: flperp(3), i_e, tau0, roland_eta
     REAL(num) :: lambdac, coeff_eta, moduclip, moduclip2, u_dot_e
+    ! Used by the spin routine
+    REAL(num), INTENT(OUT), OPTIONAL :: e_out(3), b_out(3)    
 
     CALL field_at_particle(part_x, part_y, e_at_part, b_at_part)
 
@@ -742,6 +744,12 @@ CONTAINS
     ! Determine eta from fields
     calculate_eta = roland_eta
 
+    ! Used by the spin routine
+#ifdef(SPIN)
+    CALL field_at_particle(part_x, part_y, e_at_part, b_at_part)
+    IF (PRESENT(e_out)) e_out = e_at_part
+    IF (PRESENT(b_out)) b_out = b_at_part
+#endif
   END FUNCTION calculate_eta
 
 
@@ -753,7 +761,8 @@ CONTAINS
     REAL(num), INTENT(IN) :: dir_x, dir_y, dir_z, part_e
     REAL(num) :: e_at_part(3), b_at_part(3), q(3)
     REAL(num) :: e_dot_dir, calculate_chi_roland
-
+    ! Used by the spin routine
+    REAL(num), INTENT(OUT), OPTIONAL :: e_out(3), b_out(3)
     CALL field_at_particle(part_x, part_y, e_at_part, b_at_part)
 
     e_dot_dir = e_at_part(1) * dir_x + e_at_part(2) * dir_y &
@@ -771,7 +780,11 @@ CONTAINS
 
     ! Determine chi from fields
     calculate_chi = calculate_chi_roland
-
+#ifdef(SPIN)
+    CALL field_at_particle(part_x, part_y, e_at_part, b_at_part)
+    IF (PRESENT(e_out)) e_out = e_at_part
+    IF (PRESENT(b_out)) b_out = b_at_part
+#endif
   END FUNCTION calculate_chi
 
 
@@ -964,6 +977,12 @@ CONTAINS
     IF (photon_sample_fraction < 1.0_num) THEN
       samp_photon = random() < photon_sample_fraction
     END IF
+
+    ! Set spin here
+    ! nlcs_final_states(p_lepton, e_field, b_field, charge_sign, &
+    !  lam, chi, spin, xi_stored)
+
+
 
     ! This will only create photons that have energies above a user specified
     ! cutoff and if photon generation is turned on. E+/- recoil is always

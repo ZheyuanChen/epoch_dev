@@ -66,6 +66,7 @@ CONTAINS
         CALL init_particle_spin_uniform(species, new_particle)
       CASE(c_spin_directed)
         CALL init_particle_spin_directed(species, new_particle)
+      CASE DEFAULT; new_particle%spin = 0.0_num
     END SELECT
 
   END SUBROUTINE init_particle_spin
@@ -179,6 +180,152 @@ CONTAINS
     END IF
 
   END FUNCTION anomalous_moment_factor
+
+
+
+  ! The following four helpers implement Algorithms A, R and P in
+  ! SPIN_DOCUMENTATION.md. They do not gather fields or change particles.
+  SUBROUTINE compute_local_field_axes(px_photon, py_photon, pz_photon, &
+      ex_part, ey_part, ez_part, bx_part, by_part, bz_part, &
+      n, e_hat, b_hat, valid, charge_sign)
+
+    REAL(num), INTENT(IN) :: px_photon, py_photon, pz_photon
+    REAL(num), INTENT(IN) :: ex_part, ey_part, ez_part
+    REAL(num), INTENT(IN) :: bx_part, by_part, bz_part
+    REAL(num), INTENT(OUT) :: n(3), e_hat(3), b_hat(3)
+    LOGICAL, INTENT(OUT) :: valid
+    REAL(num), OPTIONAL, INTENT(IN) :: charge_sign
+    REAL(num) :: p(3), electric(3), magnetic(3), crossed_e(3)
+    REAL(num) :: scale, sign_field
+
+    valid = .FALSE.
+    n = 0.0_num
+    e_hat = 0.0_num
+    b_hat = 0.0_num
+    p = (/ px_photon, py_photon, pz_photon /)
+    ! Scaling avoids squaring the very small SI photon momenta.
+    scale = MAXVAL(ABS(p))
+    IF (scale <= TINY(1.0_num)) RETURN
+    n = p / scale
+    n = n / SQRT(DOT_PRODUCT(n, n))
+
+    electric = (/ ex_part, ey_part, ez_part /)
+    magnetic = c * (/ bx_part, by_part, bz_part /)
+    ! crossed_E = E + c n x B - n (n dot E).
+    ! Scale before projection; a relative tolerance rejects cancellation
+    ! at round-off without imposing an absolute physical field cutoff.
+    scale = MAX(MAXVAL(ABS(electric)), MAXVAL(ABS(magnetic)))
+    IF (scale <= TINY(1.0_num)) RETURN
+    electric = electric / scale
+    magnetic = magnetic / scale
+    crossed_e = electric - n * DOT_PRODUCT(n, electric) &
+        + (/ n(2)*magnetic(3) - n(3)*magnetic(2), &
+             n(3)*magnetic(1) - n(1)*magnetic(3), &
+             n(1)*magnetic(2) - n(2)*magnetic(1) /)
+    crossed_e = crossed_e - n * DOT_PRODUCT(n, crossed_e)
+    scale = SQRT(DOT_PRODUCT(crossed_e, crossed_e))
+    IF (scale <= 16.0_num * EPSILON(1.0_num)) RETURN
+
+    ! T21 Eq. (51): charge is absorbed into the field axes. Default to
+    ! the electron convention; use only the sign, never charge in SI.
+    ! Physical spin/helicity signs in event kernels await a separate audit.
+    sign_field = -1.0_num
+    IF (PRESENT(charge_sign)) THEN
+      IF (ABS(charge_sign) <= TINY(1.0_num)) RETURN
+      sign_field = SIGN(1.0_num, charge_sign)
+    END IF
+    e_hat = sign_field * crossed_e / scale
+    ! crossed_B = cB - cn(n dot B) - n cross E = crossed_E cross n.
+    ! B_hat = E_hat cross n; no independent magnetic normalisation.
+    b_hat = (/ e_hat(2)*n(3) - e_hat(3)*n(2), &
+               e_hat(3)*n(1) - e_hat(1)*n(3), &
+               e_hat(1)*n(2) - e_hat(2)*n(1) /)
+    valid = .TRUE.
+
+  END SUBROUTINE compute_local_field_axes
+
+
+  SUBROUTINE reference_axis(n, r1, r2)
+
+    ! Requires unit n. r1 = z cross n, r2 = n cross r1.
+    REAL(num), INTENT(IN) :: n(3)
+    REAL(num), INTENT(OUT) :: r1(3), r2(3)
+    REAL(num) :: norm
+
+    r1 = (/ -n(2), n(1), 0.0_num /)
+    norm = SQRT(DOT_PRODUCT(r1, r1))
+    IF (norm < 1.0e-12_num) THEN
+      ! The documented x-axis fallback, projected transverse to n.
+      ! This also handles directions extremely close to the poles.
+      r1 = (/ 1.0_num, 0.0_num, 0.0_num /) - n(1) * n
+      norm = SQRT(DOT_PRODUCT(r1, r1))
+    END IF
+    r1 = r1 / norm
+    r2 = (/ n(2)*r1(3) - n(3)*r1(2), &
+            n(3)*r1(1) - n(1)*r1(3), &
+            n(1)*r1(2) - n(2)*r1(1) /)
+
+  END SUBROUTINE reference_axis
+
+
+  FUNCTION pol_stored_to_obs(r1, r2, e_hat, xi_stored) RESULT(xi_obs)
+
+    REAL(num), INTENT(IN) :: r1(3), r2(3), e_hat(3), xi_stored(3)
+    REAL(num) :: xi_obs(3), cw, sw, c2w, s2w
+
+    ! Unit transverse axes supplied by Algorithms A and R.
+    ! cos(2omega) = (E_hat dot r1)^2 - (E_hat dot r2)^2;
+    ! sin(2omega) = 2 (E_hat dot r1) (E_hat dot r2).
+    cw = DOT_PRODUCT(e_hat, r1)
+    sw = DOT_PRODUCT(e_hat, r2)
+    c2w = cw*cw - sw*sw
+    s2w = 2.0_num * cw * sw
+    ! Rotate xi_1 and xi_3 by (cos2omega -sin2omega;
+    !                           sin2omega  cos2omega).
+    ! xi_2 is circular; mixed-state length is preserved, not normalised.
+    xi_obs(1) = c2w*xi_stored(1) - s2w*xi_stored(3)
+    xi_obs(2) = xi_stored(2)
+    xi_obs(3) = s2w*xi_stored(1) + c2w*xi_stored(3)
+
+  END FUNCTION pol_stored_to_obs
+
+
+  FUNCTION pol_obs_to_stored(r1, r2, e_hat, xi_obs) RESULT(xi_stored)
+
+    REAL(num), INTENT(IN) :: r1(3), r2(3), e_hat(3), xi_obs(3)
+    REAL(num) :: xi_stored(3), cw, sw, c2w, s2w
+
+    ! Same double angle; inverse rotation is the transpose, not another
+    ! stored-to-observed rotation. No photon direction argument is needed.
+    cw = DOT_PRODUCT(e_hat, r1)
+    sw = DOT_PRODUCT(e_hat, r2)
+    c2w = cw*cw - sw*sw
+    s2w = 2.0_num * cw * sw
+    xi_stored(1) = c2w*xi_obs(1) + s2w*xi_obs(3)
+    xi_stored(2) = xi_obs(2)
+    xi_stored(3) = -s2w*xi_obs(1) + c2w*xi_obs(3)
+
+  END FUNCTION pol_obs_to_stored
+
+
+  !Get the lepton axes from compute_local_field_axes(..., charge_sign = 1.0_num). 
+    !With +1 this returns the physical ε̂ and β̂ = ε̂ × n directly.
+  !Take the spin components s·ε̂, s·β̂, s·v̂.
+  !Look up R₁ and R₂ at x = 2λ/(3χ(1−λ)).
+  !Evaluate w and g from polarised_lcfa.py, with qs = the sign of the charge.
+  !Set the final spin, either to the mean g/w or by collapsing along ĝ.
+  !Evaluate F/F₀ with that final spin to get ξ_obs.
+  !Convert with pol_obs_to_stored(r1, r2, e_hat_photon, xi_obs). 
+  !Here r₁, r₂ come from reference_axis(n) and Ê_photon = −ε̂; its sign doesn't matter.
+  SUBROUTINE nlcs_final_states(p_lepton, e_field, b_field, charge_sign, &
+      lam, chi, spin, xi_stored)
+    ! p_lepton: momentum direction before emission; lam = photon energy /
+    ! lepton energy; chi = EPOCH's eta. spin is INTENT(INOUT); xi_stored
+    ! is the photon's Stokes vector on its reference axes.
+
+
+
+
 
 
 #endif
