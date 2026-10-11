@@ -529,7 +529,7 @@ evaluate.o: evaluate.F90 shunt.o stack.o
 evaluator_blocks.o: evaluator_blocks.F90 custom_parser.o stack.o strings.o
 fields.o: fields.f90 boundary.o
 	$(FC) -c $(FFLAGS) $(FLTCONS) -o $(OBJDIR)/$@ $(PREPROFLAGS) $<
-file_injectors.o: file_injectors.F90 partlist.o utilities.o
+file_injectors.o: file_injectors.F90 partlist.o utilities.o spin.o
 finish.o: finish.f90 background_collisions.o collisions.o constants.o deck.o \
 	diagnostics.o dist_fn.o injectors.o ionise.o laser.o probes.o setup.o window.o
 helper.o: helper.F90 balance.o boundary.o deltaf_loader.o partlist.o simple_io.o \
