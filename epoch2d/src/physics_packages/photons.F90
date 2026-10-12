@@ -694,7 +694,7 @@ CONTAINS
 
 
   FUNCTION calculate_eta(part_x, part_y, part_ux, part_uy, part_uz, &
-      gamma_rel)
+      gamma_rel, e_out, b_out)
 
     REAL(num) :: calculate_eta
     REAL(num), INTENT(IN) :: part_x, part_y
@@ -745,16 +745,14 @@ CONTAINS
     calculate_eta = roland_eta
 
     ! Used by the spin routine
-#ifdef(SPIN)
-    CALL field_at_particle(part_x, part_y, e_at_part, b_at_part)
     IF (PRESENT(e_out)) e_out = e_at_part
     IF (PRESENT(b_out)) b_out = b_at_part
-#endif
   END FUNCTION calculate_eta
 
 
 
-  FUNCTION calculate_chi(part_x, part_y, dir_x, dir_y, dir_z, part_e)
+  FUNCTION calculate_chi(part_x, part_y, dir_x, dir_y, dir_z, part_e, &
+      e_out, b_out)
 
     REAL(num) :: calculate_chi
     REAL(num), INTENT(IN) :: part_x, part_y
@@ -780,11 +778,8 @@ CONTAINS
 
     ! Determine chi from fields
     calculate_chi = calculate_chi_roland
-#ifdef(SPIN)
-    CALL field_at_particle(part_x, part_y, e_at_part, b_at_part)
     IF (PRESENT(e_out)) e_out = e_at_part
     IF (PRESENT(b_out)) b_out = b_at_part
-#endif
   END FUNCTION calculate_chi
 
 

@@ -141,10 +141,11 @@ CONTAINS
 
   END SUBROUTINE setup_anomalous_moment_table
 
-
+! Set other tables here
 
   SUBROUTINE deallocate_spin_tables
     DEALLOCATE(amm_log_f)
+    ! Deallocate all tables
   END SUBROUTINE deallocate_spin_tables
 
 
@@ -323,6 +324,14 @@ CONTAINS
     ! lepton energy; chi = EPOCH's eta. spin is INTENT(INOUT); xi_stored
     ! is the photon's Stokes vector on its reference axes.
 
+    REAL(num), INTENT(IN) :: p_lepton(3), e_field(3), b_field(3)
+    REAL(num), INTENT(IN) :: charge_sign, lam, chi
+    REAL(num), INTENT(INOUT) :: spin(3)
+    REAL(num), INTENT(OUT) :: xi_stored(3)
+
+    xi_stored = 0.0_num
+
+  END SUBROUTINE nlcs_final_states
 
 
 
