@@ -38,6 +38,18 @@ MODULE spin
   REAL(num) :: asym_log_eta_min, asym_log_eta_max, asym_idlog
   REAL(num), ALLOCATABLE :: asym_log_a(:)
 
+  ! Photon-energy CDFs of NLCS for zeta = +1 (up) and -1 (down), on
+  ! the grid of ksi_sokolov.table (log_eta, log_chi); sampled with
+  ! find_value_from_table_alt like p_photon_energy
+  REAL(num), ALLOCATABLE :: nlcs_cdf_up(:,:), nlcs_cdf_down(:,:)
+
+  ! R1 = K_1/3(x)/K_2/3(x) and R2 = IntK_1/3(x)/K_2/3(x) as log10 R on
+  ! a uniform log10(x) grid (bessel_k.table): the Bessel content of
+  ! every spin- and polarisation-resolved final-state quantity
+  INTEGER :: n_bessel
+  REAL(num) :: bessel_log_x_min, bessel_log_x_max, bessel_idlog
+  REAL(num), ALLOCATABLE :: bessel_log_r1(:), bessel_log_r2(:)
+
 CONTAINS
 
 
@@ -178,9 +190,95 @@ CONTAINS
 
 
 
+  ! Read ksi_sokolov_up.table and ksi_sokolov_down.table
+  ! (gen_nlcs_spin_cdf_tables.py), which share the grid of
+  ! ksi_sokolov.table. Call after setup_tables_qed has built log_eta.
+  ! Rank 0 reads, then broadcasts. Called only with use_spin_qed.
+  SUBROUTINE setup_nlcs_spin_cdf_tables
+
+    CALL read_cdf_table('ksi_sokolov_up.table', nlcs_cdf_up)
+    CALL read_cdf_table('ksi_sokolov_down.table', nlcs_cdf_down)
+
+  CONTAINS
+
+    SUBROUTINE read_cdf_table(name, cdf)
+
+      CHARACTER(LEN=*), INTENT(IN) :: name
+      REAL(num), ALLOCATABLE, INTENT(INOUT) :: cdf(:,:)
+      INTEGER :: n_eta, n_chi, ieta, ichi
+      REAL(num) :: lmin, lmax
+
+      ALLOCATE(cdf(n_sample_eta, n_sample_chi))
+      IF (rank == 0) THEN
+        OPEN(unit=lu, file=TRIM(qed_table_location) // '/' // name, &
+            status='OLD')
+        READ(lu,*) n_eta, n_chi, lmin, lmax
+        ! The table must share the grid of ksi_sokolov.table
+        IF (n_eta /= n_sample_eta .OR. n_chi /= n_sample_chi &
+            .OR. ABS(lmin - log_eta(1)) > 1.0e-8_num &
+            .OR. ABS(lmax - log_eta(n_sample_eta)) > 1.0e-8_num) THEN
+          PRINT*, '*** ERROR ***'
+          PRINT*, TRIM(name), ' is not on the grid of ksi_sokolov.table'
+          CALL abort_code(c_err_bad_value)
+        END IF
+        DO ieta = 1, n_eta
+          READ(lu,*) (cdf(ieta,ichi), ichi = 1, n_chi)
+        END DO
+        CLOSE(unit=lu)
+      END IF
+      CALL MPI_BCAST(cdf, n_sample_eta * n_sample_chi, mpireal, 0, comm, &
+          errcode)
+
+    END SUBROUTINE read_cdf_table
+
+  END SUBROUTINE setup_nlcs_spin_cdf_tables
+
+
+
+  ! Read the R1 and R2 columns of bessel_k.table
+  ! (gen_bessel_k_table.py); the absolute K columns that follow on each
+  ! row are skipped. The grid is uniform in log10(x).
+  ! Rank 0 reads, then broadcasts. Called only with use_spin_qed.
+  SUBROUTINE setup_bessel_k_table
+
+    INTEGER :: i
+    REAL(num) :: log_x, dlog, buf(2)
+
+    IF (rank == 0) THEN
+      OPEN(unit=lu, file=TRIM(qed_table_location) // '/bessel_k.table', &
+          status='OLD')
+      READ(lu,*) n_bessel, bessel_log_x_min, bessel_log_x_max
+      ALLOCATE(bessel_log_r1(n_bessel), bessel_log_r2(n_bessel))
+      dlog = (bessel_log_x_max - bessel_log_x_min) / (n_bessel - 1)
+      DO i = 1, n_bessel
+        READ(lu,*) log_x, bessel_log_r1(i), bessel_log_r2(i)
+        IF (ABS(log_x - bessel_log_x_min - (i - 1) * dlog) &
+            > 1.0e-8_num) CALL abort_code(c_err_bad_value)
+      END DO
+      CLOSE(unit=lu)
+    END IF
+
+    CALL MPI_BCAST(n_bessel, 1, MPI_INTEGER, 0, comm, errcode)
+    buf = (/ bessel_log_x_min, bessel_log_x_max /)
+    CALL MPI_BCAST(buf, 2, mpireal, 0, comm, errcode)
+    bessel_log_x_min = buf(1)
+    bessel_log_x_max = buf(2)
+    IF (rank /= 0) ALLOCATE(bessel_log_r1(n_bessel), bessel_log_r2(n_bessel))
+    CALL MPI_BCAST(bessel_log_r1, n_bessel, mpireal, 0, comm, errcode)
+    CALL MPI_BCAST(bessel_log_r2, n_bessel, mpireal, 0, comm, errcode)
+    bessel_idlog = (n_bessel - 1) / (bessel_log_x_max - bessel_log_x_min)
+
+  END SUBROUTINE setup_bessel_k_table
+
+
+
   SUBROUTINE deallocate_spin_tables
     IF (ALLOCATED(amm_log_f)) DEALLOCATE(amm_log_f)
     IF (ALLOCATED(asym_log_a)) DEALLOCATE(asym_log_a)
+    IF (ALLOCATED(nlcs_cdf_up)) DEALLOCATE(nlcs_cdf_up)
+    IF (ALLOCATED(nlcs_cdf_down)) DEALLOCATE(nlcs_cdf_down)
+    IF (ALLOCATED(bessel_log_r1)) DEALLOCATE(bessel_log_r1)
+    IF (ALLOCATED(bessel_log_r2)) DEALLOCATE(bessel_log_r2)
   END SUBROUTINE deallocate_spin_tables
 
 
@@ -250,6 +348,136 @@ CONTAINS
 
 
 
+  FUNCTION nlcs_down_probability(zeta, a) RESULT(p_down)
+
+    ! At an emission, the photon energy is drawn from the zeta = -1
+    ! (down) spectrum with this probability and from the zeta = +1 (up)
+    ! spectrum otherwise. With W = W_up (1 + zeta)/2 + W_down (1 - zeta)/2
+    ! and W_up/down = W_bar (1 +- A), the weight of the down part is
+    ! (1 - zeta)(1 - A) / (2 (1 + A zeta)). Exact, since the spectrum
+    ! is linear in zeta (Qian's Eq. 3.3 with a fresh random number).
+    REAL(num), INTENT(IN) :: zeta, a
+    REAL(num) :: p_down
+
+    p_down = 0.5_num * (1.0_num - zeta) * (1.0_num - a) &
+        / (1.0_num + a * zeta)
+
+  END FUNCTION nlcs_down_probability
+
+
+
+  SUBROUTINE bessel_ratios(x, r1, r2)
+
+    ! R1 = K_1/3(x)/K_2/3(x) and R2 = IntK_1/3(x)/K_2/3(x), both in
+    ! [0, 1]: linear interpolation of log10 R in log10 x inside
+    ! bessel_k.table, the two-term expansions of gen_bessel_k_table.py
+    ! outside it (they join the table to ~1e-7 without rescaling)
+    !   x < x_min:  R1 = e1 x^(1/3) - 3x/2,
+    !               R2 = d1 x^(2/3) - 3 e1 x^(4/3)/2,
+    !   x > x_max:  R1 = 1 - 1/(6x) + 7/(72x^2),  R2 = 1 - 2/(3x) + 1/x^2.
+    ! x <= 0 (lam = 0) gives 0 and x = +Inf (lam = 1) gives 1.
+    REAL(num), INTENT(IN) :: x
+    REAL(num), INTENT(OUT) :: r1, r2
+    REAL(num) :: lx, w, y, x13
+    INTEGER :: i
+
+    IF (x <= 0.0_num) THEN
+      r1 = 0.0_num
+      r2 = 0.0_num
+      RETURN
+    END IF
+
+    lx = LOG10(x)
+    IF (lx <= bessel_log_x_min) THEN
+      x13 = x**(1.0_num / 3.0_num)
+      r1 = c_bessel_e1 * x13 - 1.5_num * x
+      r2 = x13 * (c_bessel_d1 * x13 - 1.5_num * c_bessel_e1 * x)
+    ELSE IF (lx >= bessel_log_x_max) THEN
+      y = 1.0_num / x
+      r1 = 1.0_num - y * (1.0_num / 6.0_num - y * 7.0_num / 72.0_num)
+      r2 = 1.0_num - y * (2.0_num / 3.0_num - y)
+    ELSE
+      w = (lx - bessel_log_x_min) * bessel_idlog
+      i = INT(w)
+      w = w - i
+      i = i + 1
+      r1 = 10.0_num**((1.0_num - w) * bessel_log_r1(i) &
+          + w * bessel_log_r1(i+1))
+      r2 = 10.0_num**((1.0_num - w) * bessel_log_r2(i) &
+          + w * bessel_log_r2(i+1))
+    END IF
+
+  END SUBROUTINE bessel_ratios
+
+
+
+  ! nlcs_w_g and nlcs_photon_f are the NLCS final-state functions of
+  ! polarised_lcfa.py (Qian's thesis Appendix A.1 rederived in EPOCH's
+  ! bases from T21, three-vector blocks contracted in subscript order).
+  ! Inputs: lam = photon energy / lepton energy, 0 <= lam < 1;
+  ! r1, r2 from bessel_ratios at x = 2 lam / (3 chi (1 - lam)), chi the
+  ! emitter's (EPOCH's eta); qs the sign of the emitter's charge;
+  ! si, sf the initial and final spins as components on the lepton axes
+  ! (eps_hat, beta_hat, v_hat) of lepton_spin_axes. All outputs share
+  ! the positive factor K_2/3 / (pi sqrt 3), which cancels in every
+  ! ratio. For a photon of energy lam, summed over final spins and
+  ! photon polarisations, the emission density is proportional to w;
+  ! resolved in sf and the photon Stokes vector xi_obs it is
+  ! proportional to F0 + xi_obs . F, with F0 = w + sf . g.
+  SUBROUTINE nlcs_w_g(lam, r1, r2, qs, si, w, g)
+
+    ! w and g: the final spin, summed over photon polarisations, has
+    ! the Stokes-like vector g / w (|g| <= w)
+    REAL(num), INTENT(IN) :: lam, r1, r2, qs, si(3)
+    REAL(num), INTENT(OUT) :: w, g(3)
+    REAL(num) :: s1, kap, a, c2
+
+    s1 = 1.0_num - lam
+    kap = s1 + 1.0_num / s1
+    a = lam * qs * r1
+    c2 = 2.0_num - r2
+
+    w = kap - r2 + a * si(2)
+    g(1) = c2 * si(1)
+    g(2) = c2 * si(2) + a / s1
+    g(3) = (kap - r2 * (lam + s1 * s1) / s1) * si(3)
+
+  END SUBROUTINE nlcs_w_g
+
+
+
+  SUBROUTINE nlcs_photon_f(lam, r1, r2, qs, si, sf, f0, f)
+
+    ! F0 and F: given the final spin sf, the photon has the Stokes vector
+    ! xi_obs = F / F0 (|F| <= F0) on the axes (xi_1 linear along E_hat,
+    ! xi_2 circular, xi_3 diagonal). With sf = 0 this returns F0 = w and
+    ! F = F_bar, the photon polarisation summed over final spins.
+    REAL(num), INTENT(IN) :: lam, r1, r2, qs, si(3), sf(3)
+    REAL(num), INTENT(OUT) :: f0, f(3)
+    REAL(num) :: s1, kap, a, c2, h, d, p
+
+    s1 = 1.0_num - lam
+    kap = s1 + 1.0_num / s1
+    a = lam * qs * r1
+    c2 = 2.0_num - r2
+    h = 0.5_num * kap
+    d = 0.5_num * lam * lam * r2 / s1
+    p = lam * (2.0_num - lam) / s1
+
+    f0 = kap - r2 + a * (si(2) + sf(2) / s1) &
+        + c2 * (sf(1) * si(1) + sf(2) * si(2)) &
+        + (kap - r2 * (lam + s1 * s1) / s1) * sf(3) * si(3)
+    f(1) = 1.0_num + a * (sf(2) + si(2) / s1) + (h + d) * sf(2) * si(2) &
+        + (h - d) * sf(1) * si(1) + sf(3) * si(3)
+    f(2) = a * (sf(2) * si(3) / s1 - sf(3) * si(2)) &
+        + (p - lam * r2 / s1) * sf(3) + (p - lam * r2) * si(3)
+    f(3) = -a * (sf(1) + si(1) / s1) - (d + 0.5_num * p) * sf(2) * si(1) &
+        + (0.5_num * p - d) * sf(1) * si(2)
+
+  END SUBROUTINE nlcs_photon_f
+
+
+
   SUBROUTINE lepton_spin_axes(ux, uy, uz, gamma_rel, e_field, b_field, &
       eps_hat, beta_hat, v_hat, valid)
 
@@ -300,24 +528,29 @@ CONTAINS
 
 
 
-  FUNCTION lepton_spin_zeta(ux, uy, uz, gamma_rel, e_field, b_field, &
-      spin, charge) RESULT(zeta)
+  SUBROUTINE lepton_spin_projection(ux, uy, uz, gamma_rel, e_field, &
+      b_field, spin, charge, zeta, n_hat, valid)
 
-    ! zeta = qs (s . beta_hat), qs the sign of the charge: the only spin
-    ! dependence of the NLCS rate, W = W_bar (1 + A zeta). Zero when the
-    ! axes are undefined (no momentum or no effective field).
+    ! n_hat = qs beta_hat (qs the sign of the charge) and zeta = s . n_hat:
+    ! the only spin dependence of the NLCS rate, W = W_bar (1 + A zeta),
+    ! and the axis of the non-emission update. zeta = 0, n_hat = 0 and
+    ! valid = .FALSE. when the axes are undefined (no momentum or no
+    ! effective field).
     REAL(num), INTENT(IN) :: ux, uy, uz, gamma_rel
     REAL(num), INTENT(IN) :: e_field(3), b_field(3), spin(3), charge
-    REAL(num) :: zeta
+    REAL(num), INTENT(OUT) :: zeta, n_hat(3)
+    LOGICAL, INTENT(OUT) :: valid
     REAL(num) :: eps_hat(3), beta_hat(3), v_hat(3)
-    LOGICAL :: valid
 
     zeta = 0.0_num
+    n_hat = 0.0_num
     CALL lepton_spin_axes(ux, uy, uz, gamma_rel, e_field, b_field, &
         eps_hat, beta_hat, v_hat, valid)
-    IF (valid) zeta = SIGN(1.0_num, charge) * DOT_PRODUCT(spin, beta_hat)
+    IF (.NOT. valid) RETURN
+    n_hat = SIGN(1.0_num, charge) * beta_hat
+    zeta = DOT_PRODUCT(spin, n_hat)
 
-  END FUNCTION lepton_spin_zeta
+  END SUBROUTINE lepton_spin_projection
 
 
 
@@ -349,6 +582,72 @@ CONTAINS
     END IF
 
   END FUNCTION spin_delta_optical_depth
+
+
+
+  SUBROUTINE lepton_no_emission_update(spin, n_hat, x)
+
+    ! Spin of a lepton that did not emit in the step: Qian's quantum
+    ! non-transition update (thesis section 3.3), in the exact
+    ! finite-step form of T21 Eqs. (133)-(134). Leptons whose spin
+    ! state emits less (zeta = -1) are more likely to survive, so
+    !   s' = [(zeta - t) n_hat + sqrt(1 - t^2) s_perp] / (1 - t zeta),
+    ! zeta = s . n_hat, s_perp = s - zeta n_hat, t = tanh x, with
+    ! x = A W_bar dt (A from nlcs_asymmetry, W_bar dt the spin-averaged
+    ! optical-depth decrement) and n_hat = qs beta_hat. This is the
+    ! normalised survivor state whose norm is the survival probability
+    ! used by spin_delta_optical_depth. Pure states stay pure, |s| <= 1
+    ! is kept and states along +-n_hat do not change. Steps compose:
+    ! n steps of x equal one step of n x. The rotation part of the loop
+    ! is the a(chi) term of T-BMT and is not added here.
+    ! See notes for moire theory
+    REAL(num), INTENT(INOUT) :: spin(3)
+    REAL(num), INTENT(IN) :: n_hat(3), x
+    REAL(num) :: t, zeta, s_perp(3)
+
+    t = TANH(x)
+    zeta = DOT_PRODUCT(spin, n_hat)
+    s_perp = spin - zeta * n_hat
+    spin = ((zeta - t) * n_hat + SQRT(1.0_num - t * t) * s_perp) &
+        / (1.0_num - t * zeta)
+
+  END SUBROUTINE lepton_no_emission_update
+
+
+
+  FUNCTION photon_no_decay_update(xi_obs, t, phi) RESULT(xi_new)
+
+    ! The photon equivalence of the above
+    ! Stokes vector of a photon that did not decay (NBW) in the step,
+    ! in the observation basis: T21 Eqs. (147)-(150), SPIN_DOCUMENTATION
+    ! section 2.5. The same algebra as lepton_no_emission_update with
+    ! the Stokes axis xi_1 in place of n_hat: photons polarised parallel
+    ! to E_hat (xi_1 = +1) decay less, so with t = tanh nu,
+    ! nu = (W_perp - W_par) dt / 2 (dichroism),
+    !   D = 1 + t xi_1,  xi_1' = (xi_1 + t) / D,
+    ! and (xi_3, xi_2) rotate by the birefringence phase phi (T21 Eq.
+    ! 149) and shrink by sqrt(1 - t^2) / D. Pure states stay pure;
+    ! |xi| <= 1 is kept. Convert stored -> observed before and observed
+    ! -> stored after (pol_stored_to_obs, pol_obs_to_stored).
+    ! Not called yet: it needs the NBW asymmetry W_perp/W_par and, for
+    ! phi /= 0, a birefringence table.
+    REAL(num), INTENT(IN) :: xi_obs(3), t
+    REAL(num), INTENT(IN), OPTIONAL :: phi
+    REAL(num) :: xi_new(3), d, amp, cphi, sphi
+
+    cphi = 1.0_num
+    sphi = 0.0_num
+    IF (PRESENT(phi)) THEN
+      cphi = COS(phi)
+      sphi = SIN(phi)
+    END IF
+    d = 1.0_num + t * xi_obs(1)
+    amp = SQRT(1.0_num - t * t) / d
+    xi_new(1) = (xi_obs(1) + t) / d
+    xi_new(3) = amp * (xi_obs(3) * cphi - xi_obs(2) * sphi)
+    xi_new(2) = amp * (xi_obs(3) * sphi + xi_obs(2) * cphi)
+
+  END FUNCTION photon_no_decay_update
 
 
 

@@ -114,6 +114,10 @@ MODULE constants
   ! (TABLES/gen_anomalous_moment_table.py prints these)
   REAL(num), PARAMETER :: c_amm_tail0 = 0.51910910269057631_num
   REAL(num), PARAMETER :: c_amm_tail1 = 0.75687263015135131_num
+  ! Small-x tails of R1 = K_1/3/K_2/3 and R2 = IntK_1/3/K_2/3:
+  ! R1 ~ e1 x^(1/3), R2 ~ d1 x^(2/3) (TABLES/gen_bessel_k_table.py)
+  REAL(num), PARAMETER :: c_bessel_e1 = 1.5702287534698010_num
+  REAL(num), PARAMETER :: c_bessel_d1 = 1.6876255256264092_num
 
 #endif
 

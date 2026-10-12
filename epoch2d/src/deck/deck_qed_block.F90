@@ -100,19 +100,12 @@ CONTAINS
       END IF
     END IF
 
-    ! Spin-dependent NLCS rate
+    ! Spin-dependent NLCS rate and photon-energy spectra
     IF (rank == 0 .AND. use_qed .AND. use_spin_qed) THEN
-      INQUIRE(file=TRIM(qed_table_location) &
-          // '/nlcs_spin_asymmetry.table', exist=exists)
-      IF (.NOT.exists) THEN
-        DO iu = 1, nio_units ! Print to stdout and to file
-          io = io_units(iu)
-          WRITE(io,*) '*** ERROR ***'
-          WRITE(io,*) 'Unable to find nlcs_spin_asymmetry.table in the ', &
-              'directory "' // TRIM(qed_table_location) // '"'
-        END DO
-        CALL abort_code(c_err_io_error)
-      END IF
+      CALL check_spin_table('nlcs_spin_asymmetry.table')
+      CALL check_spin_table('ksi_sokolov_up.table')
+      CALL check_spin_table('ksi_sokolov_down.table')
+      CALL check_spin_table('bessel_k.table')
     END IF
 #endif
 
@@ -148,6 +141,28 @@ CONTAINS
       CALL abort_code(c_err_pp_options_missing)
     END IF
 #endif
+#if defined(SPIN) && defined(PHOTONS)
+  CONTAINS
+
+    SUBROUTINE check_spin_table(name)
+
+      CHARACTER(LEN=*), INTENT(IN) :: name
+      LOGICAL :: found
+
+      INQUIRE(file=TRIM(qed_table_location) // '/' // name, exist=found)
+      IF (.NOT.found) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'Unable to find ', name, ' in the ', &
+              'directory "' // TRIM(qed_table_location) // '"'
+        END DO
+        CALL abort_code(c_err_io_error)
+      END IF
+
+    END SUBROUTINE check_spin_table
+#endif
+
   END SUBROUTINE qed_deck_finalise
 
 

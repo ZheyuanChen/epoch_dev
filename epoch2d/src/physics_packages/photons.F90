@@ -461,6 +461,8 @@ CONTAINS
     CALL setup_anomalous_moment_table
     ! Spin asymmetry A(eta) of the NLCS rate
     IF (use_spin_qed) CALL setup_nlcs_asymmetry_table
+    ! K_1/3/K_2/3 and IntK_1/3/K_2/3 for the final spin and polarisation
+    IF (use_spin_qed) CALL setup_bessel_k_table
 #endif
     log_omegahat(:,1) = log_tpair(:,1)
 
@@ -479,6 +481,11 @@ CONTAINS
     END DO
 
     DEALLOCATE(chimin_table)
+
+#ifdef SPIN
+    ! Spin-resolved photon-energy CDFs, on the grid just built
+    IF (use_spin_qed) CALL setup_nlcs_spin_cdf_tables
+#endif
 
   END SUBROUTINE setup_tables_qed
 
@@ -551,7 +558,9 @@ CONTAINS
     REAL(num) :: eta, chi_val, part_e, gamma_rel, norm
     REAL(num) :: dtau
 #ifdef SPIN
-    REAL(num) :: e_at_part(3), b_at_part(3), zeta
+    REAL(num) :: e_at_part(3), b_at_part(3), zeta, n_hat(3)
+    REAL(num) :: a_spin, x_spin
+    LOGICAL :: spin_valid
 #endif
 
     DO ispecies = 1, n_species
@@ -586,11 +595,13 @@ CONTAINS
 #ifdef SPIN
             ! Spin-dependent rate W_bar (1 + A zeta), zeta = qs s.beta_hat
             IF (use_spin_qed) THEN
-              zeta = lepton_spin_zeta(part_ux, part_uy, part_uz, &
+              CALL lepton_spin_projection(part_ux, part_uy, part_uz, &
                   gamma_rel, e_at_part, b_at_part, current%spin, &
-                  species_list(ispecies)%charge)
-              dtau = spin_delta_optical_depth(dtau, nlcs_asymmetry(eta), &
-                  zeta, spin_second_order_depth)
+                  species_list(ispecies)%charge, zeta, n_hat, spin_valid)
+              a_spin = nlcs_asymmetry(eta)
+              x_spin = a_spin * dtau
+              dtau = spin_delta_optical_depth(dtau, a_spin, zeta, &
+                  spin_second_order_depth)
             END IF
 #endif
             current%optical_depth = current%optical_depth - dtau
@@ -612,9 +623,24 @@ CONTAINS
 #endif
           ! If optical depth dropped below zero generate photon...
           IF (current%optical_depth < 0.0_num) THEN
+#ifdef SPIN
+            IF (use_spin_qed) THEN
+              CALL generate_photon(current, photon_species, eta, zeta, &
+                  a_spin)
+            ELSE
+              CALL generate_photon(current, photon_species, eta)
+            END IF
+#else
             CALL generate_photon(current, photon_species, eta)
+#endif
             ! ... and reset optical depth
             current%optical_depth = reset_optical_depth()
+#ifdef SPIN
+          ELSE IF (use_spin_qed .AND. .NOT. use_continuous_emission) THEN
+            ! No emission this step: survivor (non-transition) spin
+            IF (spin_valid) CALL lepton_no_emission_update(current%spin, &
+                n_hat, x_spin)
+#endif
           END IF
 
 #ifdef TRIDENT_PHOTONS
@@ -928,14 +954,18 @@ CONTAINS
 
 
 
-  SUBROUTINE generate_photon(generating_electron, iphoton, eta)
+  SUBROUTINE generate_photon(generating_electron, iphoton, eta, zeta, &
+      a_spin)
 
     ! Generates a photon moving in same direction as electron
-    ! (generates entirely new photon)
+    ! (generates entirely new photon). With zeta and a_spin (SPIN,
+    ! use_spin_qed) the photon energy comes from the spin-resolved
+    ! spectrum of the emitting lepton.
 
     TYPE(particle), POINTER :: generating_electron
     INTEGER, INTENT(IN) :: iphoton
     REAL(num), INTENT(IN) :: eta
+    REAL(num), INTENT(IN), OPTIONAL :: zeta, a_spin
     REAL(num) :: dir_x, dir_y, dir_z, mag_p, generating_gamma
     REAL(num) :: rand_temp, photon_energy
     REAL(num) :: g_eta, sync_force, sync_rate, taubar_c, beta
@@ -956,7 +986,26 @@ CONTAINS
     ! Determine photon energy
 
     rand_temp = random()
+#ifdef SPIN
+    ! Use Int F^-1_{up,down} to sample momentum transfer
+    IF (PRESENT(zeta) .AND. PRESENT(a_spin)) THEN
+      ! W = W_up (1 + zeta)/2 + W_down (1 - zeta)/2: pick the spectrum
+      ! by its weight at this step (exact, by linearity in zeta)
+      IF (random() < nlcs_down_probability(zeta, a_spin)) THEN
+        photon_energy = calculate_photon_energy(rand_temp, eta, &
+            generating_gamma, nlcs_cdf_down)
+      ELSE
+        photon_energy = calculate_photon_energy(rand_temp, eta, &
+            generating_gamma, nlcs_cdf_up)
+      END IF
+    ELSE ! If something goes wrong or use_spin_qed not activated
+          ! use the old way
+      photon_energy = calculate_photon_energy(rand_temp, eta, &
+          generating_gamma)
+    END IF
+#else
     photon_energy = calculate_photon_energy(rand_temp, eta, generating_gamma)
+#endif
 
     IF (use_radiation_reaction) THEN
       IF (use_continuous_emission) THEN
@@ -1034,25 +1083,46 @@ CONTAINS
 
 
 
-  FUNCTION calculate_photon_energy(rand_seed, eta, generating_gamma)
+  FUNCTION calculate_photon_energy(rand_seed, eta, generating_gamma, &
+      p_table)
 
+    ! p_table: a photon-energy CDF on the grid of p_photon_energy
+    ! (default p_photon_energy, the spin-averaged ksi_sokolov.table)
     REAL(num) :: calculate_photon_energy
     REAL(num), INTENT(IN) :: rand_seed, eta, generating_gamma
-    REAL(num) :: eta_min, chi_tmp, chi_final
+    REAL(num), INTENT(IN), OPTIONAL :: p_table(:,:)
+    REAL(num) :: chi_final
 
-    eta_min = 10.0_num**MINVAL(log_eta)
-    ! In the classical case, always use the spectrum at minimum eta
-    IF (use_classical_emission .OR. (eta < eta_min)) THEN ! Extrapolate downwards with chi \propto eta^2
-      chi_tmp = find_value_from_table_alt(eta_min, rand_seed, &
-          n_sample_eta, n_sample_chi, log_eta, log_chi, p_photon_energy)
-      chi_final = chi_tmp * (eta / eta_min)**2
+    IF (PRESENT(p_table)) THEN
+      chi_final = sample_chi(p_table)
     ELSE
-      chi_final = find_value_from_table_alt(eta, rand_seed, &
-          n_sample_eta, n_sample_chi, log_eta, log_chi, p_photon_energy)
-    ENDIF
+      chi_final = sample_chi(p_photon_energy)
+    END IF
 
     calculate_photon_energy = (2.0_num * chi_final / eta) * generating_gamma &
         * m0 * c**2
+
+  CONTAINS
+
+    FUNCTION sample_chi(table)
+
+      REAL(num) :: sample_chi
+      REAL(num), INTENT(IN) :: table(n_sample_eta,n_sample_chi)
+      REAL(num) :: eta_min, chi_tmp
+
+      eta_min = 10.0_num**MINVAL(log_eta)
+      ! In the classical case, always use the spectrum at minimum eta
+      ! and extrapolate downwards with chi \propto eta^2
+      IF (use_classical_emission .OR. (eta < eta_min)) THEN
+        chi_tmp = find_value_from_table_alt(eta_min, rand_seed, &
+            n_sample_eta, n_sample_chi, log_eta, log_chi, table)
+        sample_chi = chi_tmp * (eta / eta_min)**2
+      ELSE
+        sample_chi = find_value_from_table_alt(eta, rand_seed, &
+            n_sample_eta, n_sample_chi, log_eta, log_chi, table)
+      END IF
+
+    END FUNCTION sample_chi
 
   END FUNCTION calculate_photon_energy
 
