@@ -776,27 +776,102 @@ CONTAINS
   END FUNCTION pol_obs_to_stored
 
 
-  !Get the lepton axes from compute_local_field_axes(..., charge_sign = 1.0_num). 
-    !With +1 this returns the physical ε̂ and β̂ = ε̂ × n directly.
-  !Take the spin components s·ε̂, s·β̂, s·v̂.
-  !Look up R₁ and R₂ at x = 2λ/(3χ(1−λ)).
-  !Evaluate w and g from polarised_lcfa.py, with qs = the sign of the charge.
-  !Set the final spin, either to the mean g/w or by collapsing along ĝ.
-  !Evaluate F/F₀ with that final spin to get ξ_obs.
-  !Convert with pol_obs_to_stored(r1, r2, e_hat_photon, xi_obs). 
-  !Here r₁, r₂ come from reference_axis(n) and Ê_photon = −ε̂; its sign doesn't matter.
-  SUBROUTINE nlcs_final_states(p_lepton, e_field, b_field, charge_sign, &
-      lam, chi, spin, xi_stored)
-    ! p_lepton: momentum direction before emission; lam = photon energy /
-    ! lepton energy; chi = EPOCH's eta. spin is INTENT(INOUT); xi_stored
-    ! is the photon's Stokes vector on its reference axes.
+  SUBROUTINE nlcs_final_states(ux, uy, uz, gamma_rel, e_field, b_field, &
+      charge, lam, eta, want_photon, spin, xi_stored)
 
-    REAL(num), INTENT(IN) :: p_lepton(3), e_field(3), b_field(3)
-    REAL(num), INTENT(IN) :: charge_sign, lam, chi
+    ! Final lepton spin and photon Stokes vector of an NLCS emission
+    ! (Qian's thesis section 3, Appendix A.1, in EPOCH's bases).
+    ! Inputs: the emitter before recoil (u = p / (m c) and its Lorentz
+    ! factor), the SI fields at it, its charge (only the sign is used),
+    ! the photon energy fraction lam and EPOCH's eta (the emitter's chi).
+    ! spin is always updated, so the lepton changes even when the photon
+    ! is below photon_energy_min or not sampled. xi_stored is computed
+    ! only if want_photon; otherwise, or if the axes are undefined, it is
+    ! zero (and spin is unchanged in the latter case).
+    !  1. Lepton axes (eps_hat, beta_hat, v_hat) from lepton_spin_axes;
+    !     si = (s.eps_hat, s.beta_hat, s.v_hat).
+    !  2. R1, R2 at x = 2 lam / (3 eta (1 - lam)); w, g (nlcs_w_g).
+    !  3. Final spin. spin_final_states (qed block) selects
+    !     collapse: s_f = +-g_hat (the SQA) with P(+) = (1 + |g|/w)/2,
+    !               one random number;
+    !     mean:     s_f = g/w.
+    !  4. Photon (nlcs_photon_f). collapse: F, F0 given the s_f just
+    !     drawn, xi_obs = +-F_hat (the PQA) with P(+) = (1 + |F|/F0)/2,
+    !     a second random number; mean: xi_obs = F_bar/w (summed over
+    !     s_f; not F/F0 at s_f = g/w).
+    !  5. The photon moves along v_hat with E_hat = qs eps_hat (its sign
+    !     does not matter): xi_stored from reference_axis and
+    !     pol_obs_to_stored.
+    ! Averaged over the random numbers, collapse gives exactly the mean
+    ! spin and polarisation; it also keeps their correlation per event.
+    ! Mean-mode vectors are clamped to |s_f|, |xi| <= 1 against table
+    ! round-off (pure states sit at the bound).
+    REAL(num), INTENT(IN) :: ux, uy, uz, gamma_rel
+    REAL(num), INTENT(IN) :: e_field(3), b_field(3), charge, lam, eta
+    LOGICAL, INTENT(IN) :: want_photon
     REAL(num), INTENT(INOUT) :: spin(3)
     REAL(num), INTENT(OUT) :: xi_stored(3)
+    REAL(num), PARAMETER :: zero3(3) = 0.0_num
+    REAL(num) :: eps_hat(3), beta_hat(3), v_hat(3), ax1(3), ax2(3)
+    REAL(num) :: si(3), sf(3), g(3), f(3), xi_obs(3)
+    REAL(num) :: qs, lam_c, r1, r2, w, f0, gn, fn, p_plus
+    LOGICAL :: valid, collapse
 
     xi_stored = 0.0_num
+    IF (eta <= 0.0_num) RETURN
+    CALL lepton_spin_axes(ux, uy, uz, gamma_rel, e_field, b_field, &
+        eps_hat, beta_hat, v_hat, valid)
+    IF (.NOT. valid) RETURN
+
+    collapse = spin_final_states == c_spin_final_collapse
+    qs = SIGN(1.0_num, charge)
+    si = (/ DOT_PRODUCT(spin, eps_hat), DOT_PRODUCT(spin, beta_hat), &
+        DOT_PRODUCT(spin, v_hat) /)
+    ! lam = 1 is the end point of the spectrum; keep 1 - lam > 0
+    lam_c = MIN(MAX(lam, 0.0_num), 1.0_num - EPSILON(1.0_num))
+    CALL bessel_ratios(2.0_num * lam_c / (3.0_num * eta * (1.0_num - lam_c)), &
+        r1, r2)
+
+    ! Final lepton spin
+    CALL nlcs_w_g(lam_c, r1, r2, qs, si, w, g)
+    gn = SQRT(DOT_PRODUCT(g, g))
+    IF (collapse) THEN
+      IF (gn > TINY(1.0_num)) THEN
+        sf = g / gn
+      ELSE
+        ! Unpolarised: any axis, with equal probabilities
+        sf = (/ 0.0_num, 1.0_num, 0.0_num /)
+      END IF
+      IF (random() >= 0.5_num * (1.0_num + MIN(gn / w, 1.0_num))) sf = -sf
+    ELSE
+      sf = g / MAX(w, gn)
+    END IF
+
+    ! Photon polarisation
+    IF (want_photon) THEN
+      IF (collapse) THEN
+        CALL nlcs_photon_f(lam_c, r1, r2, qs, si, sf, f0, f)
+        fn = SQRT(DOT_PRODUCT(f, f))
+        IF (fn > TINY(1.0_num)) THEN
+          xi_obs = f / fn
+        ELSE
+          xi_obs = (/ 1.0_num, 0.0_num, 0.0_num /)
+        END IF
+        ! F0 >= |F| > 0 up to round-off; P(+) = 1 at the bound
+        p_plus = 1.0_num
+        IF (fn < f0) p_plus = 0.5_num * (1.0_num + fn / f0)
+        IF (random() >= p_plus) xi_obs = -xi_obs
+      ELSE
+        CALL nlcs_photon_f(lam_c, r1, r2, qs, si, zero3, f0, f)
+        fn = SQRT(DOT_PRODUCT(f, f))
+        xi_obs = f / MAX(f0, fn)
+      END IF
+      CALL reference_axis(v_hat, ax1, ax2)
+      xi_stored = pol_obs_to_stored(ax1, ax2, eps_hat, xi_obs)
+    END IF
+
+    ! Back to lab axes; the final lepton moves along v_hat too
+    spin = sf(1) * eps_hat + sf(2) * beta_hat + sf(3) * v_hat
 
   END SUBROUTINE nlcs_final_states
 

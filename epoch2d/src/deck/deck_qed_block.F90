@@ -52,6 +52,7 @@ CONTAINS
 #ifdef SPIN
       use_spin_qed = .FALSE.
       spin_second_order_depth = .FALSE.
+      spin_final_states = c_spin_final_collapse
 #endif
     END IF
 #endif
@@ -271,6 +272,19 @@ CONTAINS
 
     IF (str_cmp(element, 'spin_second_order_depth')) THEN
       spin_second_order_depth = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Final spin and photon polarisation of an event: collapse onto the
+    ! quantisation axes (default) or keep the mean
+    IF (str_cmp(element, 'spin_final_states')) THEN
+      IF (str_cmp(value, 'collapse')) THEN
+        spin_final_states = c_spin_final_collapse
+      ELSE IF (str_cmp(value, 'mean')) THEN
+        spin_final_states = c_spin_final_mean
+      ELSE
+        errcode = c_err_bad_value
+      END IF
       RETURN
     END IF
 #endif

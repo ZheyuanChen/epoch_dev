@@ -626,7 +626,8 @@ CONTAINS
 #ifdef SPIN
             IF (use_spin_qed) THEN
               CALL generate_photon(current, photon_species, eta, zeta, &
-                  a_spin)
+                  a_spin, e_at_part, b_at_part, &
+                  species_list(ispecies)%charge)
             ELSE
               CALL generate_photon(current, photon_species, eta)
             END IF
@@ -955,23 +956,30 @@ CONTAINS
 
 
   SUBROUTINE generate_photon(generating_electron, iphoton, eta, zeta, &
-      a_spin)
+      a_spin, e_field, b_field, charge)
 
     ! Generates a photon moving in same direction as electron
     ! (generates entirely new photon). With zeta and a_spin (SPIN,
     ! use_spin_qed) the photon energy comes from the spin-resolved
-    ! spectrum of the emitting lepton.
+    ! spectrum of the emitting lepton; with the fields at the lepton and
+    ! its charge as well, the lepton's final spin and the photon's
+    ! polarisation are set (nlcs_final_states).
 
     TYPE(particle), POINTER :: generating_electron
     INTEGER, INTENT(IN) :: iphoton
     REAL(num), INTENT(IN) :: eta
     REAL(num), INTENT(IN), OPTIONAL :: zeta, a_spin
+    REAL(num), INTENT(IN), OPTIONAL :: e_field(3), b_field(3), charge
     REAL(num) :: dir_x, dir_y, dir_z, mag_p, generating_gamma
     REAL(num) :: rand_temp, photon_energy
     REAL(num) :: g_eta, sync_force, sync_rate, taubar_c, beta
     REAL(num) :: rad_limit = 1.0_num
-    LOGICAL :: samp_photon
+    LOGICAL :: samp_photon, make_photon
     TYPE(particle), POINTER :: new_photon
+#ifdef SPIN
+    REAL(num) :: u_mag, xi_stored(3)
+    LOGICAL :: spin_event
+#endif
 
     mag_p = MAX(SQRT(generating_electron%part_p(1)**2 &
         + generating_electron%part_p(2)**2 &
@@ -982,6 +990,10 @@ CONTAINS
     dir_z = generating_electron%part_p(3) / mag_p
 
     generating_gamma = SQRT(1.0_num + (mag_p / m0 / c)**2)
+#ifdef SPIN
+    ! The final states use the lepton before recoil
+    u_mag = mag_p / (m0 * c)
+#endif
 
     ! Determine photon energy
 
@@ -1043,17 +1055,24 @@ CONTAINS
       samp_photon = random() < photon_sample_fraction
     END IF
 
-    ! Set spin here
-    ! nlcs_final_states(p_lepton, e_field, b_field, charge_sign, &
-    !  lam, chi, spin, xi_stored)
-
-
-
     ! This will only create photons that have energies above a user specified
     ! cutoff and if photon generation is turned on. E+/- recoil is always
     ! considered
-    IF (photon_energy > photon_energy_min .AND. produce_photons &
-        .AND. samp_photon) THEN
+    make_photon = photon_energy > photon_energy_min .AND. produce_photons &
+        .AND. samp_photon
+
+#ifdef SPIN
+    ! Final lepton spin (always) and photon polarisation (if the photon
+    ! is created); lam = photon energy / lepton energy = 2 chi / eta
+    spin_event = PRESENT(zeta) .AND. PRESENT(a_spin) &
+        .AND. PRESENT(e_field) .AND. PRESENT(b_field) .AND. PRESENT(charge)
+    IF (spin_event) CALL nlcs_final_states(dir_x * u_mag, dir_y * u_mag, &
+        dir_z * u_mag, generating_gamma, e_field, b_field, charge, &
+        photon_energy / (generating_gamma * m0 * c**2), eta, make_photon, &
+        generating_electron%spin, xi_stored)
+#endif
+
+    IF (make_photon) THEN
       IF (photon_energy < c_tiny) photon_energy = c_tiny
 
       CALL create_particle(new_photon)
@@ -1065,6 +1084,10 @@ CONTAINS
 
       new_photon%optical_depth = reset_optical_depth()
       new_photon%particle_energy = photon_energy
+#ifdef SPIN
+      ! Stokes vector on the photon's reference axes (zero otherwise)
+      IF (spin_event) new_photon%spin = xi_stored
+#endif
 
       IF (use_continuous_emission) THEN
         ! Calculate photon weight from synchrotron emission rate

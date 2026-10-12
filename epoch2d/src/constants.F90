@@ -118,6 +118,11 @@ MODULE constants
   ! R1 ~ e1 x^(1/3), R2 ~ d1 x^(2/3) (TABLES/gen_bessel_k_table.py)
   REAL(num), PARAMETER :: c_bessel_e1 = 1.5702287534698010_num
   REAL(num), PARAMETER :: c_bessel_d1 = 1.6876255256264092_num
+  ! Final states of a spin-resolved QED event (qed block
+  ! spin_final_states): collapse onto the quantisation axes, or keep
+  ! the mean (density-matrix) spin and polarisation
+  INTEGER, PARAMETER :: c_spin_final_collapse = 1
+  INTEGER, PARAMETER :: c_spin_final_mean = 2
 
 #endif
 

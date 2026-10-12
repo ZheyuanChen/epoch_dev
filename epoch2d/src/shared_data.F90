@@ -664,7 +664,9 @@ MODULE shared_data
   ! Spin-dependent QED (qed block). use_spin_qed makes the NLCS rate
   ! depend on the lepton spin; spin_second_order_depth uses the exact
   ! two-state survival probability in the optical-depth decrement.
+  ! spin_final_states: c_spin_final_collapse or c_spin_final_mean.
   LOGICAL :: use_spin_qed = .FALSE., spin_second_order_depth = .FALSE.
+  INTEGER :: spin_final_states = c_spin_final_collapse
 #endif
 #endif
   LOGICAL :: use_qed = .FALSE.
