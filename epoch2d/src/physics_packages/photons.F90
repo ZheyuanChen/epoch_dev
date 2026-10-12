@@ -463,6 +463,9 @@ CONTAINS
     IF (use_spin_qed) CALL setup_nlcs_asymmetry_table
     ! K_1/3/K_2/3 and IntK_1/3/K_2/3 for the final spin and polarisation
     IF (use_spin_qed) CALL setup_bessel_k_table
+    ! Polarisation asymmetry A(chi) and energy split of NBW
+    IF (use_spin_qed) CALL setup_nbw_asymmetry_table
+    IF (use_spin_qed) CALL setup_nbw_split_tables
 #endif
     log_omegahat(:,1) = log_tpair(:,1)
 
@@ -560,7 +563,8 @@ CONTAINS
 #ifdef SPIN
     REAL(num) :: e_at_part(3), b_at_part(3), zeta, n_hat(3)
     REAL(num) :: a_spin, x_spin
-    LOGICAL :: spin_valid
+    REAL(num) :: e_hat(3), ax1(3), ax2(3), xi_obs(3)
+    LOGICAL :: spin_valid, pol_valid
 #endif
 
     DO ispecies = 1, n_species
@@ -670,15 +674,57 @@ CONTAINS
           dir_y = current%part_p(2) * norm
           dir_z = current%part_p(3) * norm
           part_e  = current%particle_energy / m0 / c**2
+#ifdef SPIN
+          chi_val = calculate_chi(part_x, part_y, dir_x, dir_y, &
+              dir_z, part_e, e_at_part, b_at_part)
+#else
           chi_val = calculate_chi(part_x, part_y, dir_x, dir_y, &
               dir_z, part_e)
+#endif
 
-          current%optical_depth = current%optical_depth &
-              - delta_optical_depth_photon(chi_val, part_e)
+          dtau = delta_optical_depth_photon(chi_val, part_e)
+#ifdef SPIN
+          ! Polarisation-dependent rate W_bar (1 - A xi1_obs)
+          IF (use_spin_qed) THEN
+            CALL photon_pol_frame(current%part_p, e_at_part, b_at_part, &
+                n_hat, e_hat, ax1, ax2, pol_valid)
+            xi_obs = 0.0_num
+            IF (pol_valid) xi_obs = pol_stored_to_obs(ax1, ax2, e_hat, &
+                current%spin)
+            a_spin = nbw_asymmetry(chi_val)
+            ! The survivor update uses the physical (unboosted) decrement
+            x_spin = a_spin * dtau / boost_pairs
+            dtau = spin_delta_optical_depth(dtau, a_spin, -xi_obs(1), &
+                spin_second_order_depth)
+          END IF
+#endif
+          current%optical_depth = current%optical_depth - dtau
           ! If optical depth dropped below zero generate pair...
+          ! (the photon is removed from its own species, ispecies, which
+          ! need not be the QED photon species)
           IF (current%optical_depth < 0.0_num) THEN
-            CALL generate_pair(current, chi_val, photon_species, &
+#ifdef SPIN
+            IF (use_spin_qed) THEN
+              CALL generate_pair(current, chi_val, ispecies, &
+                  breit_wheeler_electron_species, &
+                  breit_wheeler_positron_species, xi_obs, a_spin, &
+                  e_at_part, b_at_part)
+            ELSE
+              CALL generate_pair(current, chi_val, ispecies, &
+                  breit_wheeler_electron_species, &
+                  breit_wheeler_positron_species)
+            END IF
+#else
+            CALL generate_pair(current, chi_val, ispecies, &
                 breit_wheeler_electron_species, breit_wheeler_positron_species)
+#endif
+#ifdef SPIN
+          ELSE IF (use_spin_qed .AND. pol_valid) THEN
+            ! No decay this step: survivor (non-transition) polarisation,
+            ! dichroism only (no birefringence table yet)
+            current%spin = pol_obs_to_stored(ax1, ax2, e_hat, &
+                photon_no_decay_update(xi_obs, TANH(x_spin)))
+#endif
           END IF
           current => next_pt
         END DO
@@ -1152,15 +1198,23 @@ CONTAINS
 
 
   SUBROUTINE generate_pair(generating_photon, chi_val, iphoton, ielectron, &
-      ipositron)
+      ipositron, xi_obs, a_nbw, e_field, b_field)
 
-    ! Generates a pair moving in same direction as photon
+    ! Generates a pair moving in same direction as photon. With xi_obs
+    ! and a_nbw (SPIN, use_spin_qed) the energy split comes from the
+    ! polarisation-resolved spectrum; with the fields at the photon as
+    ! well, the pair spins are set (nbw_final_states).
     TYPE(particle), POINTER :: generating_photon
     REAL(num), INTENT(IN) :: chi_val
     INTEGER, INTENT(IN) :: iphoton, ielectron, ipositron
+    REAL(num), INTENT(IN), OPTIONAL :: xi_obs(3), a_nbw
+    REAL(num), INTENT(IN), OPTIONAL :: e_field(3), b_field(3)
     REAL(num) :: dir_x, dir_y, dir_z, mag_p
     REAL(num) :: probability_split, epsilon_frac, norm
     TYPE(particle), POINTER :: new_electron, new_positron
+#ifdef SPIN
+    LOGICAL :: spin_event
+#endif
 
     CALL create_particle(new_electron)
     CALL create_particle(new_positron)
@@ -1178,8 +1232,29 @@ CONTAINS
 
     probability_split = random()
 
+#ifdef SPIN
+    spin_event = PRESENT(xi_obs) .AND. PRESENT(a_nbw) &
+        .AND. PRESENT(e_field) .AND. PRESENT(b_field)
+    IF (spin_event) THEN
+      ! W = W_par (1 + xi1)/2 + W_perp (1 - xi1)/2: pick the spectrum by
+      ! its weight (exact, by linearity in xi1); epsilon_frac is the
+      ! electron fraction (the spectrum is symmetric)
+      IF (random() < nbw_par_probability(xi_obs(1), a_nbw)) THEN
+        epsilon_frac = find_value_from_table(chi_val, probability_split, &
+            n_nbw_chi, n_nbw_split, nbw_log_chi, nbw_split, nbw_cdf_par)
+      ELSE
+        epsilon_frac = find_value_from_table(chi_val, probability_split, &
+            n_nbw_chi, n_nbw_split, nbw_log_chi, nbw_split, nbw_cdf_perp)
+      END IF
+    ELSE
+      epsilon_frac = find_value_from_table(chi_val, probability_split, &
+          n_sample_chi2, n_sample_epsilon, log_chi2, epsilon_split, &
+          p_energy)
+    END IF
+#else
     epsilon_frac = find_value_from_table(chi_val, probability_split, &
         n_sample_chi2, n_sample_epsilon, log_chi2, epsilon_split, p_energy)
+#endif
 
     mag_p = MAX(generating_photon%particle_energy / c, c_tiny)
 
@@ -1190,6 +1265,13 @@ CONTAINS
     new_positron%part_p(1) = (1.0_num - epsilon_frac) * mag_p * dir_x
     new_positron%part_p(2) = (1.0_num - epsilon_frac) * mag_p * dir_y
     new_positron%part_p(3) = (1.0_num - epsilon_frac) * mag_p * dir_z
+
+#ifdef SPIN
+    ! Pair spins (zero, i.e. unpolarised, otherwise)
+    IF (spin_event) CALL nbw_final_states(generating_photon%part_p, &
+        e_field, b_field, xi_obs, chi_val, epsilon_frac, new_electron%spin, &
+        new_positron%spin)
+#endif
 
     new_electron%optical_depth = reset_optical_depth()
     new_positron%optical_depth = reset_optical_depth()
