@@ -459,6 +459,8 @@ CONTAINS
 #ifdef SPIN
       ! Table for a(chi)
     CALL setup_anomalous_moment_table
+    ! Spin asymmetry A(eta) of the NLCS rate
+    IF (use_spin_qed) CALL setup_nlcs_asymmetry_table
 #endif
     log_omegahat(:,1) = log_tpair(:,1)
 
@@ -547,6 +549,10 @@ CONTAINS
     REAL(num) :: part_ux, part_uy, part_uz
     REAL(num) :: dir_x, dir_y, dir_z
     REAL(num) :: eta, chi_val, part_e, gamma_rel, norm
+    REAL(num) :: dtau
+#ifdef SPIN
+    REAL(num) :: e_at_part(3), b_at_part(3), zeta
+#endif
 
     DO ispecies = 1, n_species
 
@@ -564,15 +570,30 @@ CONTAINS
           part_uz = current%part_p(3) / mc0
           gamma_rel = SQRT(part_ux**2 + part_uy**2 + part_uz**2 + 1.0_num)
 
+#ifdef SPIN
+          eta = calculate_eta(part_x, part_y, part_ux, part_uy, &
+              part_uz, gamma_rel, e_at_part, b_at_part)
+#else
           eta = calculate_eta(part_x, part_y, part_ux, part_uy, &
               part_uz, gamma_rel)
+#endif
 
           ! If using continuous emission emit a photon macroparticle at every timestep
           IF (use_continuous_emission) THEN
             CALL generate_photon(current, photon_species, eta)
           ELSE
-            current%optical_depth = &
-              current%optical_depth - delta_optical_depth(eta, gamma_rel)
+            dtau = delta_optical_depth(eta, gamma_rel)
+#ifdef SPIN
+            ! Spin-dependent rate W_bar (1 + A zeta), zeta = qs s.beta_hat
+            IF (use_spin_qed) THEN
+              zeta = lepton_spin_zeta(part_ux, part_uy, part_uz, &
+                  gamma_rel, e_at_part, b_at_part, current%spin, &
+                  species_list(ispecies)%charge)
+              dtau = spin_delta_optical_depth(dtau, nlcs_asymmetry(eta), &
+                  zeta, spin_second_order_depth)
+            END IF
+#endif
+            current%optical_depth = current%optical_depth - dtau
           ENDIF
 
 #ifdef TRIDENT_PHOTONS

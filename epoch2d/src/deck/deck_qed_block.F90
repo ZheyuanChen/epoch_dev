@@ -49,6 +49,10 @@ CONTAINS
       use_LBW = .FALSE.
       use_LBW_diff = .TRUE.
       LBW_amp_factor = 1.0_num
+#ifdef SPIN
+      use_spin_qed = .FALSE.
+      spin_second_order_depth = .FALSE.
+#endif
     END IF
 #endif
 
@@ -90,6 +94,21 @@ CONTAINS
           io = io_units(iu)
           WRITE(io,*) '*** ERROR ***'
           WRITE(io,*) 'Unable to find SPIN tables in the ', &
+              'directory "' // TRIM(qed_table_location) // '"'
+        END DO
+        CALL abort_code(c_err_io_error)
+      END IF
+    END IF
+
+    ! Spin-dependent NLCS rate
+    IF (rank == 0 .AND. use_qed .AND. use_spin_qed) THEN
+      INQUIRE(file=TRIM(qed_table_location) &
+          // '/nlcs_spin_asymmetry.table', exist=exists)
+      IF (.NOT.exists) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'Unable to find nlcs_spin_asymmetry.table in the ', &
               'directory "' // TRIM(qed_table_location) // '"'
         END DO
         CALL abort_code(c_err_io_error)
@@ -228,6 +247,19 @@ CONTAINS
       RETURN
     END IF
 
+#ifdef SPIN
+    IF (str_cmp(element, 'use_spin_qed') &
+        .OR. str_cmp(element, 'spin_qed')) THEN
+      use_spin_qed = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'spin_second_order_depth')) THEN
+      spin_second_order_depth = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+#endif
+
     errcode = c_err_unknown_element
 #endif
 
@@ -275,6 +307,23 @@ CONTAINS
     END IF
     use_continuous_emission = (use_continuous_emission &
                                .OR. use_classical_emission)
+
+#ifdef SPIN
+    ! Continuous emission has no discrete events to resolve spin with
+    IF (use_qed .AND. use_spin_qed .AND. use_continuous_emission) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'use_spin_qed=T cannot be combined with ', &
+              'classical or semiclassical photon emission.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+#endif
 #endif
 
   END FUNCTION qed_block_check

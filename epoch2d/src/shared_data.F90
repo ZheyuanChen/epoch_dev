@@ -660,6 +660,12 @@ MODULE shared_data
   INTEGER :: lbw_positron_species = -1
   REAL(num), PARAMETER :: tolerance_cdf       = 1.0e-6_num
   REAL(num), PARAMETER :: tolerance_cos_angle = 1.0e-6_num
+#ifdef SPIN
+  ! Spin-dependent QED (qed block). use_spin_qed makes the NLCS rate
+  ! depend on the lepton spin; spin_second_order_depth uses the exact
+  ! two-state survival probability in the optical-depth decrement.
+  LOGICAL :: use_spin_qed = .FALSE., spin_second_order_depth = .FALSE.
+#endif
 #endif
   LOGICAL :: use_qed = .FALSE.
   LOGICAL :: use_binary_collisions = .FALSE.

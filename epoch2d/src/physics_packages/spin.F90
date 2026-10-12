@@ -14,10 +14,6 @@
 ! along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-! This for now is directly copied from Holger's repo.
-! Need to update
-
-
 MODULE spin
 
 #ifdef SPIN
@@ -35,6 +31,12 @@ MODULE spin
   REAL(num) :: amm_log_chi_min, amm_log_chi_max, amm_idlog
   REAL(num) :: amm_chi2_min, amm_tail_scale
   REAL(num), ALLOCATABLE :: amm_log_f(:)
+
+  ! NLCS rate asymmetry A(eta) on a uniform log10(eta) grid
+  ! (nlcs_spin_asymmetry.table): W(s) = W_bar (1 + A zeta)
+  INTEGER :: n_asym
+  REAL(num) :: asym_log_eta_min, asym_log_eta_max, asym_idlog
+  REAL(num), ALLOCATABLE :: asym_log_a(:)
 
 CONTAINS
 
@@ -141,11 +143,44 @@ CONTAINS
 
   END SUBROUTINE setup_anomalous_moment_table
 
-! Set other tables here
+  ! nlcs_spin_asymmetry.table (A(chi))
+  ! The grid is uniform in log10(eta)
+  ! Called only with use_spin_qed.
+  SUBROUTINE setup_nlcs_asymmetry_table
+
+    INTEGER :: i
+    REAL(num) :: log_eta, dlog, buf(2)
+
+    IF (rank == 0) THEN
+      OPEN(unit=lu, file=TRIM(qed_table_location) &
+          // '/nlcs_spin_asymmetry.table', status='OLD')
+      READ(lu,*) n_asym, asym_log_eta_min, asym_log_eta_max
+      ALLOCATE(asym_log_a(n_asym))
+      dlog = (asym_log_eta_max - asym_log_eta_min) / (n_asym - 1)
+      DO i = 1, n_asym
+        READ(lu,*) log_eta, asym_log_a(i)
+        IF (ABS(log_eta - asym_log_eta_min - (i - 1) * dlog) &
+            > 1.0e-8_num) CALL abort_code(c_err_bad_value)
+      END DO
+      CLOSE(unit=lu)
+    END IF
+
+    CALL MPI_BCAST(n_asym, 1, MPI_INTEGER, 0, comm, errcode)
+    buf = (/ asym_log_eta_min, asym_log_eta_max /)
+    CALL MPI_BCAST(buf, 2, mpireal, 0, comm, errcode)
+    asym_log_eta_min = buf(1)
+    asym_log_eta_max = buf(2)
+    IF (rank /= 0) ALLOCATE(asym_log_a(n_asym))
+    CALL MPI_BCAST(asym_log_a, n_asym, mpireal, 0, comm, errcode)
+    asym_idlog = (n_asym - 1) / (asym_log_eta_max - asym_log_eta_min)
+
+  END SUBROUTINE setup_nlcs_asymmetry_table
+
+
 
   SUBROUTINE deallocate_spin_tables
-    DEALLOCATE(amm_log_f)
-    ! Deallocate all tables
+    IF (ALLOCATED(amm_log_f)) DEALLOCATE(amm_log_f)
+    IF (ALLOCATED(asym_log_a)) DEALLOCATE(asym_log_a)
   END SUBROUTINE deallocate_spin_tables
 
 
@@ -181,6 +216,139 @@ CONTAINS
     END IF
 
   END FUNCTION anomalous_moment_factor
+
+
+
+  FUNCTION nlcs_asymmetry(eta) RESULT(a)
+
+    ! A(eta) = (W_up - W_down) / (W_up + W_down): log-log linear
+    ! interpolation inside the table, the leading order A ~ eta below
+    ! it (A -> 3 eta / 10), clamped above it
+    REAL(num), INTENT(IN) :: eta
+    REAL(num) :: a, x, w
+    INTEGER :: i
+
+    IF (eta <= 0.0_num) THEN
+      a = 0.0_num
+      RETURN
+    END IF
+
+    x = LOG10(eta)
+    IF (x <= asym_log_eta_min) THEN
+      a = 10.0_num**(asym_log_a(1) + x - asym_log_eta_min)
+    ELSE IF (x >= asym_log_eta_max) THEN
+      a = 10.0_num**asym_log_a(n_asym)
+    ELSE
+      w = (x - asym_log_eta_min) * asym_idlog
+      i = INT(w)
+      w = w - i
+      i = i + 1
+      a = 10.0_num**((1.0_num - w) * asym_log_a(i) + w * asym_log_a(i+1))
+    END IF
+
+  END FUNCTION nlcs_asymmetry
+
+
+
+  SUBROUTINE lepton_spin_axes(ux, uy, uz, gamma_rel, e_field, b_field, &
+      eps_hat, beta_hat, v_hat, valid)
+
+    ! Physical spin axes of a lepton
+    ! eps_hat = normalised E_perp + v x B (E_perp transverse to v),
+    ! beta_hat = eps_hat x v_hat, v_hat. Unlike compute_local_field_axes
+    ! this uses the actual velocity, so it also holds at moderate gamma.
+    ! Inputs: u = p / (m c), the Lorentz factor and SI fields.
+    REAL(num), INTENT(IN) :: ux, uy, uz, gamma_rel
+    REAL(num), INTENT(IN) :: e_field(3), b_field(3)
+    REAL(num), INTENT(OUT) :: eps_hat(3), beta_hat(3), v_hat(3)
+    LOGICAL, INTENT(OUT) :: valid
+    REAL(num) :: u(3), beta(3), electric(3), magnetic(3), crossed_e(3)
+    REAL(num) :: umag, scale
+
+    valid = .FALSE.
+    eps_hat = 0.0_num
+    beta_hat = 0.0_num
+    v_hat = 0.0_num
+    u = (/ ux, uy, uz /)
+    umag = SQRT(DOT_PRODUCT(u, u))
+    IF (umag <= TINY(1.0_num)) RETURN
+    v_hat = u / umag
+    beta = u / gamma_rel
+
+    electric = e_field
+    magnetic = c * b_field
+    ! Scale first; a relative tolerance rejects round-off cancellation
+    scale = MAX(MAXVAL(ABS(electric)), MAXVAL(ABS(magnetic)))
+    IF (scale <= TINY(1.0_num)) RETURN
+    electric = electric / scale
+    magnetic = magnetic / scale
+    ! E - v_hat (v_hat . E) + (v / c) x (c B)
+    crossed_e = electric - v_hat * DOT_PRODUCT(v_hat, electric) &
+        + (/ beta(2)*magnetic(3) - beta(3)*magnetic(2), &
+             beta(3)*magnetic(1) - beta(1)*magnetic(3), &
+             beta(1)*magnetic(2) - beta(2)*magnetic(1) /)
+    scale = SQRT(DOT_PRODUCT(crossed_e, crossed_e))
+    IF (scale <= 16.0_num * EPSILON(1.0_num)) RETURN
+
+    eps_hat = crossed_e / scale
+    beta_hat = (/ eps_hat(2)*v_hat(3) - eps_hat(3)*v_hat(2), &
+                  eps_hat(3)*v_hat(1) - eps_hat(1)*v_hat(3), &
+                  eps_hat(1)*v_hat(2) - eps_hat(2)*v_hat(1) /)
+    valid = .TRUE.
+
+  END SUBROUTINE lepton_spin_axes
+
+
+
+  FUNCTION lepton_spin_zeta(ux, uy, uz, gamma_rel, e_field, b_field, &
+      spin, charge) RESULT(zeta)
+
+    ! zeta = qs (s . beta_hat), qs the sign of the charge: the only spin
+    ! dependence of the NLCS rate, W = W_bar (1 + A zeta). Zero when the
+    ! axes are undefined (no momentum or no effective field).
+    REAL(num), INTENT(IN) :: ux, uy, uz, gamma_rel
+    REAL(num), INTENT(IN) :: e_field(3), b_field(3), spin(3), charge
+    REAL(num) :: zeta
+    REAL(num) :: eps_hat(3), beta_hat(3), v_hat(3)
+    LOGICAL :: valid
+
+    zeta = 0.0_num
+    CALL lepton_spin_axes(ux, uy, uz, gamma_rel, e_field, b_field, &
+        eps_hat, beta_hat, v_hat, valid)
+    IF (valid) zeta = SIGN(1.0_num, charge) * DOT_PRODUCT(spin, beta_hat)
+
+  END FUNCTION lepton_spin_zeta
+
+
+
+  FUNCTION spin_delta_optical_depth(dtau0, a, zeta, second_order) &
+      RESULT(dtau)
+
+    ! Optical-depth decrement given the spin-averaged one, dtau0 =
+    ! W_bar dt. First order: dtau = dtau0 (1 + A zeta). Second order:
+    ! the exact two-state survival probability,
+    ! dtau = dtau0 - ln(cosh x - zeta sinh x), x = A dtau0.
+    ! The two agree for zeta = +-1 and differ at O(x^2) otherwise.
+    ! See notes for theory
+    REAL(num), INTENT(IN) :: dtau0, a, zeta
+    LOGICAL, INTENT(IN) :: second_order
+    REAL(num) :: dtau, x, y
+
+    IF (second_order) THEN
+      x = a * dtau0
+      ! y = cosh x - zeta sinh x - 1, written without cancellation
+      y = 2.0_num * SINH(0.5_num * x)**2 - zeta * SINH(x)
+      ! ln(1 + y); the series keeps full precision for small y
+      IF (ABS(y) < 1.0e-4_num) THEN
+        dtau = dtau0 - y * (1.0_num - y * (0.5_num - y / 3.0_num))
+      ELSE
+        dtau = dtau0 - LOG(1.0_num + y)
+      END IF
+    ELSE
+      dtau = dtau0 * (1.0_num + a * zeta)
+    END IF
+
+  END FUNCTION spin_delta_optical_depth
 
 
 
