@@ -50,6 +50,19 @@ MODULE spin
   REAL(num) :: bessel_log_x_min, bessel_log_x_max, bessel_idlog
   REAL(num), ALLOCATABLE :: bessel_log_r1(:), bessel_log_r2(:)
 
+  ! NBW rate asymmetry A(chi) on a uniform log10(chi) grid
+  ! (nbw_polarisation_asymmetry.table): W(xi) = W_bar (1 - A xi1_obs)
+  INTEGER :: n_nbw_asym
+  REAL(num) :: nbw_asym_log_chi_min, nbw_asym_log_chi_max, nbw_asym_idlog
+  REAL(num), ALLOCATABLE :: nbw_asym_log_a(:)
+
+  ! Electron-fraction CDFs of NBW for xi1_obs = +1 (par) and -1 (perp)
+  ! (nbw_energy_split_par/perp.table) on the grid nbw_log_chi (log10
+  ! chi) x nbw_split (0..1); sampled with find_value_from_table
+  INTEGER :: n_nbw_chi, n_nbw_split
+  REAL(num), ALLOCATABLE :: nbw_log_chi(:), nbw_split(:)
+  REAL(num), ALLOCATABLE :: nbw_cdf_par(:,:), nbw_cdf_perp(:,:)
+
 CONTAINS
 
 
@@ -272,6 +285,109 @@ CONTAINS
 
 
 
+  ! nbw_polarisation_asymmetry.table (A(chi), EPOCH's photon chi)
+  ! The grid is uniform in log10(chi)
+  ! Called only with use_spin_qed.
+  SUBROUTINE setup_nbw_asymmetry_table
+
+    INTEGER :: i
+    REAL(num) :: log_chi, dlog, buf(2)
+
+    IF (rank == 0) THEN
+      OPEN(unit=lu, file=TRIM(qed_table_location) &
+          // '/nbw_polarisation_asymmetry.table', status='OLD')
+      READ(lu,*) n_nbw_asym, nbw_asym_log_chi_min, nbw_asym_log_chi_max
+      ALLOCATE(nbw_asym_log_a(n_nbw_asym))
+      dlog = (nbw_asym_log_chi_max - nbw_asym_log_chi_min) &
+          / (n_nbw_asym - 1)
+      DO i = 1, n_nbw_asym
+        READ(lu,*) log_chi, nbw_asym_log_a(i)
+        IF (ABS(log_chi - nbw_asym_log_chi_min - (i - 1) * dlog) &
+            > 1.0e-8_num) CALL abort_code(c_err_bad_value)
+      END DO
+      CLOSE(unit=lu)
+    END IF
+
+    CALL MPI_BCAST(n_nbw_asym, 1, MPI_INTEGER, 0, comm, errcode)
+    buf = (/ nbw_asym_log_chi_min, nbw_asym_log_chi_max /)
+    CALL MPI_BCAST(buf, 2, mpireal, 0, comm, errcode)
+    nbw_asym_log_chi_min = buf(1)
+    nbw_asym_log_chi_max = buf(2)
+    IF (rank /= 0) ALLOCATE(nbw_asym_log_a(n_nbw_asym))
+    CALL MPI_BCAST(nbw_asym_log_a, n_nbw_asym, mpireal, 0, comm, errcode)
+    nbw_asym_idlog = (n_nbw_asym - 1) &
+        / (nbw_asym_log_chi_max - nbw_asym_log_chi_min)
+
+  END SUBROUTINE setup_nbw_asymmetry_table
+
+
+
+  ! Read nbw_energy_split_par.table and nbw_energy_split_perp.table
+  ! (gen_nbw_energy_split_tables.py), which share one grid: uniform in
+  ! log10(chi), electron fraction uniform in [0, 1].
+  ! Rank 0 reads, then broadcasts. Called only with use_spin_qed.
+  SUBROUTINE setup_nbw_split_tables
+
+    INTEGER :: i, n_chi, n_split
+    REAL(num) :: buf(2), lmin, lmax
+
+    IF (rank == 0) THEN
+      OPEN(unit=lu, file=TRIM(qed_table_location) &
+          // '/nbw_energy_split_par.table', status='OLD')
+      READ(lu,*) n_nbw_chi, n_nbw_split, buf(1), buf(2)
+      CLOSE(unit=lu)
+    END IF
+    CALL MPI_BCAST(n_nbw_chi, 1, MPI_INTEGER, 0, comm, errcode)
+    CALL MPI_BCAST(n_nbw_split, 1, MPI_INTEGER, 0, comm, errcode)
+    CALL MPI_BCAST(buf, 2, mpireal, 0, comm, errcode)
+
+    ALLOCATE(nbw_log_chi(n_nbw_chi), nbw_split(n_nbw_split))
+    DO i = 1, n_nbw_chi
+      nbw_log_chi(i) = buf(1) + (buf(2) - buf(1)) * REAL(i - 1, num) &
+          / REAL(n_nbw_chi - 1, num)
+    END DO
+    DO i = 1, n_nbw_split
+      nbw_split(i) = REAL(i - 1, num) / REAL(n_nbw_split - 1, num)
+    END DO
+    CALL read_split_table('nbw_energy_split_par.table', nbw_cdf_par)
+    CALL read_split_table('nbw_energy_split_perp.table', nbw_cdf_perp)
+
+  CONTAINS
+
+    SUBROUTINE read_split_table(name, cdf)
+
+      CHARACTER(LEN=*), INTENT(IN) :: name
+      REAL(num), ALLOCATABLE, INTENT(INOUT) :: cdf(:,:)
+      INTEGER :: ichi, j
+
+      ALLOCATE(cdf(n_nbw_chi, n_nbw_split))
+      IF (rank == 0) THEN
+        OPEN(unit=lu, file=TRIM(qed_table_location) // '/' // name, &
+            status='OLD')
+        READ(lu,*) n_chi, n_split, lmin, lmax
+        ! Both tables must share one grid
+        IF (n_chi /= n_nbw_chi .OR. n_split /= n_nbw_split &
+            .OR. ABS(lmin - buf(1)) > 1.0e-8_num &
+            .OR. ABS(lmax - buf(2)) > 1.0e-8_num) THEN
+          PRINT*, '*** ERROR ***'
+          PRINT*, TRIM(name), ' is not on the grid of ', &
+              'nbw_energy_split_par.table'
+          CALL abort_code(c_err_bad_value)
+        END IF
+        DO ichi = 1, n_nbw_chi
+          READ(lu,*) (cdf(ichi,j), j = 1, n_nbw_split)
+        END DO
+        CLOSE(unit=lu)
+      END IF
+      CALL MPI_BCAST(cdf, n_nbw_chi * n_nbw_split, mpireal, 0, comm, &
+          errcode)
+
+    END SUBROUTINE read_split_table
+
+  END SUBROUTINE setup_nbw_split_tables
+
+
+
   SUBROUTINE deallocate_spin_tables
     IF (ALLOCATED(amm_log_f)) DEALLOCATE(amm_log_f)
     IF (ALLOCATED(asym_log_a)) DEALLOCATE(asym_log_a)
@@ -279,6 +395,11 @@ CONTAINS
     IF (ALLOCATED(nlcs_cdf_down)) DEALLOCATE(nlcs_cdf_down)
     IF (ALLOCATED(bessel_log_r1)) DEALLOCATE(bessel_log_r1)
     IF (ALLOCATED(bessel_log_r2)) DEALLOCATE(bessel_log_r2)
+    IF (ALLOCATED(nbw_asym_log_a)) DEALLOCATE(nbw_asym_log_a)
+    IF (ALLOCATED(nbw_log_chi)) DEALLOCATE(nbw_log_chi)
+    IF (ALLOCATED(nbw_split)) DEALLOCATE(nbw_split)
+    IF (ALLOCATED(nbw_cdf_par)) DEALLOCATE(nbw_cdf_par)
+    IF (ALLOCATED(nbw_cdf_perp)) DEALLOCATE(nbw_cdf_perp)
   END SUBROUTINE deallocate_spin_tables
 
 
@@ -363,6 +484,56 @@ CONTAINS
         / (1.0_num + a * zeta)
 
   END FUNCTION nlcs_down_probability
+
+
+
+  FUNCTION nbw_asymmetry(chi) RESULT(a)
+
+    ! A(chi) = (W_perp - W_par) / (W_perp + W_par) of NBW, chi EPOCH's
+    ! photon parameter: log-log linear interpolation inside the table,
+    ! clamped outside it (A -> 1/3 as chi -> 0, A -> 1/5 as chi -> Inf)
+    REAL(num), INTENT(IN) :: chi
+    REAL(num) :: a, x, w
+    INTEGER :: i
+
+    IF (chi <= 0.0_num) THEN
+      a = 10.0_num**nbw_asym_log_a(1)
+      RETURN
+    END IF
+
+    x = LOG10(chi)
+    IF (x <= nbw_asym_log_chi_min) THEN
+      a = 10.0_num**nbw_asym_log_a(1)
+    ELSE IF (x >= nbw_asym_log_chi_max) THEN
+      a = 10.0_num**nbw_asym_log_a(n_nbw_asym)
+    ELSE
+      w = (x - nbw_asym_log_chi_min) * nbw_asym_idlog
+      i = INT(w)
+      w = w - i
+      i = i + 1
+      a = 10.0_num**((1.0_num - w) * nbw_asym_log_a(i) &
+          + w * nbw_asym_log_a(i+1))
+    END IF
+
+  END FUNCTION nbw_asymmetry
+
+
+
+  FUNCTION nbw_par_probability(xi1, a) RESULT(p_par)
+
+    ! At a decay, the electron fraction is drawn from the xi1 = +1 (par)
+    ! spectrum with this probability and from the xi1 = -1 (perp)
+    ! spectrum otherwise. With W = W_par (1 + xi1)/2 + W_perp (1 - xi1)/2
+    ! and W_par/perp = W_bar (1 -+ A), the weight of the par part is
+    ! (1 + xi1)(1 - A) / (2 (1 - A xi1)). Exact, since the spectrum is
+    ! linear in xi1.
+    REAL(num), INTENT(IN) :: xi1, a
+    REAL(num) :: p_par
+
+    p_par = 0.5_num * (1.0_num + xi1) * (1.0_num - a) &
+        / (1.0_num - a * xi1)
+
+  END FUNCTION nbw_par_probability
 
 
 
@@ -475,6 +646,82 @@ CONTAINS
         + (0.5_num * p - d) * sf(1) * si(2)
 
   END SUBROUTINE nlcs_photon_f
+
+
+
+  SUBROUTINE nbw_w0_j_m(s3, r1, r2, xi, w0, je, jp, m)
+
+    ! NBW pair-spin functions of polarised_lcfa.py (Qian's thesis
+    ! Appendix A.2 rederived in EPOCH's bases from T21, blocks contracted
+    ! in subscript order). Inputs: s3 = positron energy / photon energy,
+    ! 0 < s3 < 1 (the electron has s2 = 1 - s3); r1, r2 from
+    ! bessel_ratios at x = 1 / (3 chi s2 s3), chi EPOCH's photon
+    ! parameter; xi the photon's observed Stokes vector (xi_obs). Spins
+    ! are components on (eps_hat, beta_hat, v_hat), eps_hat the
+    ! normalised E_perp + v x B with v along the photon (E_hat of
+    ! xi_obs is -eps_hat; its sign does not matter). For the electron
+    ! fraction s2, the probability of the pair spins (se, sp) is
+    ! proportional to
+    !   w0 + se . je + sp . jp + sp . (m se),
+    ! with m(a,c) multiplying sp_a se_c (positron index first; T21's
+    ! positron label vector is -sp, handled in polarised_lcfa.py).
+    ! Summed over the pair spins it is 4 w0, so w0 is the spectrum
+    ! (rho - xi1) K_2/3 + IntK_1/3 in units of K_2/3. All outputs share
+    ! the positive factor K_2/3 / (pi sqrt 3).
+    REAL(num), INTENT(IN) :: s3, r1, r2, xi(3)
+    REAL(num), INTENT(OUT) :: w0, je(3), jp(3), m(3,3)
+    REAL(num) :: s2, p, rho, dd
+
+    s2 = 1.0_num - s3
+    p = s2 * s3
+    rho = (s2 * s2 + s3 * s3) / p
+    dd = (s3 - s2) / p
+
+    w0 = r2 - xi(1) + rho
+    je(1) = -r1 * xi(3) / s3
+    je(2) = r1 * (xi(1) / s3 - 1.0_num / s2)
+    je(3) = xi(2) * (r2 / s2 - dd)
+    jp(1) = r1 * xi(3) / s2
+    jp(2) = r1 * (1.0_num / s3 - xi(1) / s2)
+    jp(3) = xi(2) * (r2 / s3 + dd)
+
+    m(1,1) = r2 - 2.0_num + 0.5_num * xi(1) * (rho - r2 / p)
+    m(1,2) = -0.5_num * xi(3) * (r2 / p + dd)
+    m(1,3) = 0.0_num
+    m(2,1) = 0.5_num * xi(3) * (dd - r2 / p)
+    m(2,2) = r2 - 2.0_num + 0.5_num * xi(1) * (rho + r2 / p)
+    m(2,3) = r1 * xi(2) / s3
+    m(3,1) = 0.0_num
+    m(3,2) = -r1 * xi(2) / s2
+    ! r2 (1 - p) / p is r2 (s2 + s3^2) / (s2 s3) with s2 + s3 = 1
+    m(3,3) = r2 * (1.0_num - p) / p + xi(1) - rho
+
+  END SUBROUTINE nbw_w0_j_m
+
+
+
+  SUBROUTINE photon_pol_frame(p_photon, e_field, b_field, n_hat, e_hat, &
+      ax1, ax2, valid)
+
+    ! Axes to convert a photon's Stokes vector between stored and
+    ! observed (pol_stored_to_obs, pol_obs_to_stored): the direction
+    ! n_hat, the local field axis e_hat (Algorithm A, electron
+    ! convention: e_hat = -eps_hat, the E_hat of NBW) and the reference
+    ! axes ax1, ax2 (Algorithm R). valid = .FALSE. without momentum or
+    ! effective field; callers must then skip the conversion.
+    REAL(num), INTENT(IN) :: p_photon(3), e_field(3), b_field(3)
+    REAL(num), INTENT(OUT) :: n_hat(3), e_hat(3), ax1(3), ax2(3)
+    LOGICAL, INTENT(OUT) :: valid
+    REAL(num) :: b_hat(3)
+
+    ax1 = 0.0_num
+    ax2 = 0.0_num
+    CALL compute_local_field_axes(p_photon(1), p_photon(2), p_photon(3), &
+        e_field(1), e_field(2), e_field(3), b_field(1), b_field(2), &
+        b_field(3), n_hat, e_hat, b_hat, valid)
+    IF (valid) CALL reference_axis(n_hat, ax1, ax2)
+
+  END SUBROUTINE photon_pol_frame
 
 
 
@@ -874,6 +1121,87 @@ CONTAINS
     spin = sf(1) * eps_hat + sf(2) * beta_hat + sf(3) * v_hat
 
   END SUBROUTINE nlcs_final_states
+
+
+
+  SUBROUTINE nbw_final_states(p_photon, e_field, b_field, xi_obs, chi, &
+      s_electron, spin_electron, spin_positron)
+
+    ! Spins of the pair created by an NBW decay (Qian's thesis section
+    ! 3, Appendix A.2, in EPOCH's bases). Inputs: the photon momentum,
+    ! the SI fields at it, its observed Stokes vector xi_obs (before
+    ! this step's survivor update), EPOCH's photon chi and the electron
+    ! energy fraction s_electron. Outputs are lab vectors; both are zero
+    ! (unpolarised) if the axes are undefined.
+    !  1. Axes (eps_hat, beta_hat, v_hat) along the photon;
+    !     R1, R2 at x = 1 / (3 chi s2 s3); w0, je, jp, m (nbw_w0_j_m).
+    !  2. Electron. spin_final_states (qed block) selects
+    !     collapse: se = +-je_hat (the SQA) with P(+) = (1 + |je|/w0)/2,
+    !               one random number;
+    !     mean:     se = je/w0.
+    !  3. Positron. collapse: given se, the weight is w0 + se . je and
+    !     the vector k = jp + m se; sp = +-k_hat with P(+) = (1 + |k| /
+    !     (w0 + se . je))/2, a second random number; mean: sp = jp/w0.
+    ! Averaged over the random numbers, collapse gives exactly the mean
+    ! spins. It also keeps the pair correlation along the electron's
+    ! SQA, <sp_a se_c> = (m je_hat)_a je_hat_c / w0; correlations across
+    ! it (the rest of m / w0) cannot be carried by two separate states.
+    ! Mean mode keeps no correlation. Its vectors are clamped to <= 1.
+    REAL(num), INTENT(IN) :: p_photon(3), e_field(3), b_field(3)
+    REAL(num), INTENT(IN) :: xi_obs(3), chi, s_electron
+    REAL(num), INTENT(OUT) :: spin_electron(3), spin_positron(3)
+    REAL(num) :: n_hat(3), eps_hat(3), beta_hat(3)
+    REAL(num) :: je(3), jp(3), m(3,3), se(3), sp(3), k(3)
+    REAL(num) :: s2, s3, r1, r2, w0, jn, kn, wk, p_plus
+    LOGICAL :: valid
+
+    spin_electron = 0.0_num
+    spin_positron = 0.0_num
+    IF (chi <= 0.0_num) RETURN
+    ! charge_sign = +1 gives eps_hat itself and beta_hat = eps_hat x n
+    CALL compute_local_field_axes(p_photon(1), p_photon(2), p_photon(3), &
+        e_field(1), e_field(2), e_field(3), b_field(1), b_field(2), &
+        b_field(3), n_hat, eps_hat, beta_hat, valid, 1.0_num)
+    IF (.NOT. valid) RETURN
+
+    ! The sampled fraction may reach 0 or 1; keep s2 s3 > 0
+    s2 = MIN(MAX(s_electron, EPSILON(1.0_num)), 1.0_num - EPSILON(1.0_num))
+    s3 = 1.0_num - s2
+    CALL bessel_ratios(1.0_num / (3.0_num * chi * s2 * s3), r1, r2)
+    CALL nbw_w0_j_m(s3, r1, r2, xi_obs, w0, je, jp, m)
+
+    jn = SQRT(DOT_PRODUCT(je, je))
+    IF (spin_final_states == c_spin_final_collapse) THEN
+      ! Electron along its SQA
+      IF (jn > TINY(1.0_num)) THEN
+        se = je / jn
+      ELSE
+        ! Unpolarised: any axis, with equal probabilities
+        se = (/ 0.0_num, 1.0_num, 0.0_num /)
+      END IF
+      IF (random() >= 0.5_num * (1.0_num + MIN(jn / w0, 1.0_num))) se = -se
+      ! Positron given the electron
+      k = jp + MATMUL(m, se)
+      wk = w0 + DOT_PRODUCT(se, je)
+      kn = SQRT(DOT_PRODUCT(k, k))
+      IF (kn > TINY(1.0_num)) THEN
+        sp = k / kn
+      ELSE
+        sp = (/ 0.0_num, 1.0_num, 0.0_num /)
+      END IF
+      ! wk >= |k| > 0 up to round-off; P(+) = 1 at the bound
+      p_plus = 1.0_num
+      IF (kn < wk) p_plus = 0.5_num * (1.0_num + kn / wk)
+      IF (random() >= p_plus) sp = -sp
+    ELSE
+      se = je / MAX(w0, jn)
+      sp = jp / MAX(w0, SQRT(DOT_PRODUCT(jp, jp)))
+    END IF
+
+    spin_electron = se(1) * eps_hat + se(2) * beta_hat + se(3) * n_hat
+    spin_positron = sp(1) * eps_hat + sp(2) * beta_hat + sp(3) * n_hat
+
+  END SUBROUTINE nbw_final_states
 
 
 
