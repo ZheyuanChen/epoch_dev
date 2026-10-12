@@ -107,6 +107,9 @@ CONTAINS
       CALL check_spin_table('ksi_sokolov_up.table')
       CALL check_spin_table('ksi_sokolov_down.table')
       CALL check_spin_table('bessel_k.table')
+      CALL check_spin_table('nbw_polarisation_asymmetry.table')
+      CALL check_spin_table('nbw_energy_split_par.table')
+      CALL check_spin_table('nbw_energy_split_perp.table')
     END IF
 #endif
 

@@ -466,7 +466,8 @@ balance.o: balance.F90 boundary.o constants.o mpi_subtype_control.o \
   redblack_module.o timer.o utilities.o
 bethe_heitler.o: bethe_heitler.F90 calc_df.o partlist.o particles.o setup.o
 boundary.o: boundary.F90 injectors.o laser.o mpi_subtype_control.o \
-  particle_id_hash.o particle_temperature.o partlist.o utilities.o
+  particle_id_hash.o particle_temperature.o partlist.o utilities.o \
+  spin.o
 brem_trident.o: brem_trident.F90 calc_df.o partlist.o particles.o setup.o
 brem_muon.o: brem_muon.F90 calc_df.o partlist.o particles.o setup.o
 bremsstrahlung.o: bremsstrahlung.F90 bethe_heitler.o brem_muon.o \
