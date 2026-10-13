@@ -667,6 +667,9 @@ MODULE shared_data
   ! spin_final_states: c_spin_final_collapse or c_spin_final_mean.
   LOGICAL :: use_spin_qed = .FALSE., spin_second_order_depth = .FALSE.
   INTEGER :: spin_final_states = c_spin_final_collapse
+  ! pair_tables: c_pair_tables_legacy or c_pair_tables_lcfa (resolved
+  ! from c_pair_tables_unset when the qed block is finalised)
+  INTEGER :: pair_tables = c_pair_tables_unset
 #endif
 #endif
   LOGICAL :: use_qed = .FALSE.

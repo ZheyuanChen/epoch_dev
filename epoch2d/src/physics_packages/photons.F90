@@ -252,6 +252,12 @@ CONTAINS
         READ(lu,*) log_tpair(ichi,1), log_omegahat(ichi,2), log_tpair(ichi,2)
       END DO
       CLOSE(unit=lu)
+#ifdef SPIN
+      ! pair_tables = lcfa: the exact LCFA T(chi) in place of Erber's
+      ! approximation (the trident column is kept)
+      IF (pair_tables == c_pair_tables_lcfa) &
+          CALL read_pairprod_lcfa(n_sample_t, log_tpair(:,1), log_tpair(:,2))
+#endif
 
       OPEN(unit=lu, file=TRIM(qed_table_location)//'/ksi_sokolov.table', &
           status='OLD')
@@ -464,8 +470,10 @@ CONTAINS
     ! K_1/3/K_2/3 and IntK_1/3/K_2/3 for the final spin and polarisation
     IF (use_spin_qed) CALL setup_bessel_k_table
     ! Polarisation asymmetry A(chi) and energy split of NBW
-    IF (use_spin_qed) CALL setup_nbw_asymmetry_table
-    IF (use_spin_qed) CALL setup_nbw_split_tables
+    IF (use_spin_qed .OR. pair_tables == c_pair_tables_lcfa) THEN
+      CALL setup_nbw_asymmetry_table
+      CALL setup_nbw_split_tables
+    END IF
 #endif
     log_omegahat(:,1) = log_tpair(:,1)
 
@@ -1240,6 +1248,17 @@ CONTAINS
       ! its weight (exact, by linearity in xi1); epsilon_frac is the
       ! electron fraction (the spectrum is symmetric)
       IF (random() < nbw_par_probability(xi_obs(1), a_nbw)) THEN
+        epsilon_frac = find_value_from_table(chi_val, probability_split, &
+            n_nbw_chi, n_nbw_split, nbw_log_chi, nbw_split, nbw_cdf_par)
+      ELSE
+        epsilon_frac = find_value_from_table(chi_val, probability_split, &
+            n_nbw_chi, n_nbw_split, nbw_log_chi, nbw_split, nbw_cdf_perp)
+      END IF
+    ELSE IF (pair_tables == c_pair_tables_lcfa) THEN
+      ! Unpolarised photon (spin off): by linearity in xi1 the mixture
+      ! with par weight (1 - A)/2 is exactly the LCFA spectrum
+      IF (random() < nbw_par_probability(0.0_num, &
+          nbw_asymmetry(chi_val))) THEN
         epsilon_frac = find_value_from_table(chi_val, probability_split, &
             n_nbw_chi, n_nbw_split, nbw_log_chi, nbw_split, nbw_cdf_par)
       ELSE

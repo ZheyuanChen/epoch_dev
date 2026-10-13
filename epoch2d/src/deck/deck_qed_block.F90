@@ -53,6 +53,7 @@ CONTAINS
       use_spin_qed = .FALSE.
       spin_second_order_depth = .FALSE.
       spin_final_states = c_spin_final_collapse
+      pair_tables = c_pair_tables_unset
 #endif
     END IF
 #endif
@@ -99,6 +100,23 @@ CONTAINS
         END DO
         CALL abort_code(c_err_io_error)
       END IF
+    END IF
+
+    ! NBW tables: the exact LCFA ones by default with use_spin_qed,
+    ! EPOCH's legacy ones otherwise
+    IF (pair_tables == c_pair_tables_unset) THEN
+      IF (use_spin_qed) THEN
+        pair_tables = c_pair_tables_lcfa
+      ELSE
+        pair_tables = c_pair_tables_legacy
+      END IF
+    END IF
+    IF (rank == 0 .AND. use_qed .AND. pair_tables == c_pair_tables_lcfa) &
+        THEN
+      CALL check_spin_table('pairprod_lcfa.table')
+      CALL check_spin_table('nbw_polarisation_asymmetry.table')
+      CALL check_spin_table('nbw_energy_split_par.table')
+      CALL check_spin_table('nbw_energy_split_perp.table')
     END IF
 
     ! Spin-dependent NLCS rate and photon-energy spectra
@@ -275,6 +293,20 @@ CONTAINS
 
     IF (str_cmp(element, 'spin_second_order_depth')) THEN
       spin_second_order_depth = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! NBW rate and energy split: legacy (pairprod.table's Erber
+    ! approximation, energy_split.table) or lcfa (exact LCFA). The
+    ! default, set when the block is finalised, follows use_spin_qed.
+    IF (str_cmp(element, 'pair_tables')) THEN
+      IF (str_cmp(value, 'legacy')) THEN
+        pair_tables = c_pair_tables_legacy
+      ELSE IF (str_cmp(value, 'lcfa')) THEN
+        pair_tables = c_pair_tables_lcfa
+      ELSE
+        errcode = c_err_bad_value
+      END IF
       RETURN
     END IF
 

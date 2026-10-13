@@ -123,6 +123,12 @@ MODULE constants
   ! the mean (density-matrix) spin and polarisation
   INTEGER, PARAMETER :: c_spin_final_collapse = 1
   INTEGER, PARAMETER :: c_spin_final_mean = 2
+  ! NBW tables (qed block pair_tables): EPOCH's legacy pairprod.table
+  ! and energy_split.table, or the exact LCFA rate and energy split.
+  ! Unset resolves to lcfa with use_spin_qed, legacy otherwise.
+  INTEGER, PARAMETER :: c_pair_tables_unset = 0
+  INTEGER, PARAMETER :: c_pair_tables_legacy = 1
+  INTEGER, PARAMETER :: c_pair_tables_lcfa = 2
 
 #endif
 

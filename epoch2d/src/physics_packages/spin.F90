@@ -388,6 +388,41 @@ CONTAINS
 
 
 
+  ! Replace the T(chi) column of pairprod.table (Erber's approximation)
+  ! with the exact LCFA one from pairprod_lcfa.table
+  ! (gen_pairprod_lcfa_table.py), which must share pairprod.table's
+  ! grid. Called on rank 0 only, inside setup_tables_qed, before the
+  ! tables are broadcast; pairprod.table's trident column is untouched.
+  SUBROUTINE read_pairprod_lcfa(n, log_chi, log_t)
+
+    INTEGER, INTENT(IN) :: n
+    REAL(num), INTENT(IN) :: log_chi(n)
+    REAL(num), INTENT(INOUT) :: log_t(n)
+    INTEGER :: i, n_file
+    REAL(num) :: lmin, lmax, lc
+
+    OPEN(unit=lu, file=TRIM(qed_table_location) // '/pairprod_lcfa.table', &
+        status='OLD')
+    READ(lu,*) n_file, lmin, lmax
+    IF (n_file /= n) THEN
+      PRINT*, '*** ERROR ***'
+      PRINT*, 'pairprod_lcfa.table is not on the grid of pairprod.table'
+      CALL abort_code(c_err_bad_value)
+    END IF
+    DO i = 1, n
+      READ(lu,*) lc, log_t(i)
+      IF (ABS(lc - log_chi(i)) > 1.0e-8_num) THEN
+        PRINT*, '*** ERROR ***'
+        PRINT*, 'pairprod_lcfa.table is not on the grid of pairprod.table'
+        CALL abort_code(c_err_bad_value)
+      END IF
+    END DO
+    CLOSE(unit=lu)
+
+  END SUBROUTINE read_pairprod_lcfa
+
+
+
   SUBROUTINE deallocate_spin_tables
     IF (ALLOCATED(amm_log_f)) DEALLOCATE(amm_log_f)
     IF (ALLOCATED(asym_log_a)) DEALLOCATE(asym_log_a)
