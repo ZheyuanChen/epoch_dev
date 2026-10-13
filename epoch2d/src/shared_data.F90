@@ -670,9 +670,19 @@ MODULE shared_data
   ! pair_tables: c_pair_tables_legacy or c_pair_tables_lcfa (resolved
   ! from c_pair_tables_unset when the qed block is finalised)
   INTEGER :: pair_tables = c_pair_tables_unset
+  ! Switches for tests (qed block): spin_no_transition applies the
+  ! survivor (non-transition) updates; spin_nlcs and spin_nbw are
+  ! c_spin_process_resolved, _unpolarised or _off
+  LOGICAL :: spin_no_transition = .TRUE.
+  INTEGER :: spin_nlcs = c_spin_process_resolved
+  INTEGER :: spin_nbw = c_spin_process_resolved
 #endif
 #endif
   LOGICAL :: use_qed = .FALSE.
+#ifdef SPIN
+  ! T-BMT spin precession in the particle push (control block)
+  LOGICAL :: use_tbmt = .TRUE.
+#endif
   LOGICAL :: use_binary_collisions = .FALSE.
 #ifdef BREMSSTRAHLUNG
   !----------------------------------------------------------------------------

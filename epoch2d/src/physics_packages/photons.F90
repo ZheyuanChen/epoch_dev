@@ -612,8 +612,14 @@ CONTAINS
                   species_list(ispecies)%charge, zeta, n_hat, spin_valid)
               a_spin = nlcs_asymmetry(eta)
               x_spin = a_spin * dtau
-              dtau = spin_delta_optical_depth(dtau, a_spin, zeta, &
-                  spin_second_order_depth)
+              ! spin_nlcs (tests): unpolarised keeps W_bar, off emits
+              ! nothing; the survivor update keeps x_spin either way
+              IF (spin_nlcs == c_spin_process_resolved) THEN
+                dtau = spin_delta_optical_depth(dtau, a_spin, zeta, &
+                    spin_second_order_depth)
+              ELSE IF (spin_nlcs == c_spin_process_off) THEN
+                dtau = 0.0_num
+              END IF
             END IF
 #endif
             current%optical_depth = current%optical_depth - dtau
@@ -636,7 +642,8 @@ CONTAINS
           ! If optical depth dropped below zero generate photon...
           IF (current%optical_depth < 0.0_num) THEN
 #ifdef SPIN
-            IF (use_spin_qed) THEN
+            IF (use_spin_qed .AND. spin_nlcs == c_spin_process_resolved) &
+                THEN
               CALL generate_photon(current, photon_species, eta, zeta, &
                   a_spin, e_at_part, b_at_part, &
                   species_list(ispecies)%charge)
@@ -649,7 +656,8 @@ CONTAINS
             ! ... and reset optical depth
             current%optical_depth = reset_optical_depth()
 #ifdef SPIN
-          ELSE IF (use_spin_qed .AND. .NOT. use_continuous_emission) THEN
+          ELSE IF (use_spin_qed .AND. spin_no_transition &
+              .AND. .NOT. use_continuous_emission) THEN
             ! No emission this step: survivor (non-transition) spin
             IF (spin_valid) CALL lepton_no_emission_update(current%spin, &
                 n_hat, x_spin)
@@ -702,8 +710,14 @@ CONTAINS
             a_spin = nbw_asymmetry(chi_val)
             ! The survivor update uses the physical (unboosted) decrement
             x_spin = a_spin * dtau / boost_pairs
-            dtau = spin_delta_optical_depth(dtau, a_spin, -xi_obs(1), &
-                spin_second_order_depth)
+            ! spin_nbw (tests): unpolarised keeps W_bar, off decays
+            ! nothing; the survivor update keeps x_spin either way
+            IF (spin_nbw == c_spin_process_resolved) THEN
+              dtau = spin_delta_optical_depth(dtau, a_spin, -xi_obs(1), &
+                  spin_second_order_depth)
+            ELSE IF (spin_nbw == c_spin_process_off) THEN
+              dtau = 0.0_num
+            END IF
           END IF
 #endif
           current%optical_depth = current%optical_depth - dtau
@@ -712,7 +726,7 @@ CONTAINS
           ! need not be the QED photon species)
           IF (current%optical_depth < 0.0_num) THEN
 #ifdef SPIN
-            IF (use_spin_qed) THEN
+            IF (use_spin_qed .AND. spin_nbw == c_spin_process_resolved) THEN
               CALL generate_pair(current, chi_val, ispecies, &
                   breit_wheeler_electron_species, &
                   breit_wheeler_positron_species, xi_obs, a_spin, &
@@ -727,7 +741,8 @@ CONTAINS
                 breit_wheeler_electron_species, breit_wheeler_positron_species)
 #endif
 #ifdef SPIN
-          ELSE IF (use_spin_qed .AND. pol_valid) THEN
+          ELSE IF (use_spin_qed .AND. spin_no_transition .AND. pol_valid) &
+              THEN
             ! No decay this step: survivor (non-transition) polarisation,
             ! dichroism only (no birefringence table yet)
             current%spin = pol_obs_to_stored(ax1, ax2, e_hat, &

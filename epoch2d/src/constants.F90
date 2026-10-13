@@ -129,6 +129,13 @@ MODULE constants
   INTEGER, PARAMETER :: c_pair_tables_unset = 0
   INTEGER, PARAMETER :: c_pair_tables_legacy = 1
   INTEGER, PARAMETER :: c_pair_tables_lcfa = 2
+  ! Treatment of NLCS and NBW with use_spin_qed (qed block spin_nlcs,
+  ! spin_nbw; for tests): resolved, unpolarised (exactly the
+  ! use_spin_qed = F treatment of that process, which neither reads
+  ! nor changes spins or polarisations) or off (no events at all)
+  INTEGER, PARAMETER :: c_spin_process_resolved = 1
+  INTEGER, PARAMETER :: c_spin_process_unpolarised = 2
+  INTEGER, PARAMETER :: c_spin_process_off = 3
 
 #endif
 

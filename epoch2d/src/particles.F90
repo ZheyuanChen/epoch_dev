@@ -275,7 +275,7 @@ CONTAINS
 #ifdef SPIN
       spin_a0 = species_list(ispecies)%anomalous_magnetic_moment
       ! a(chi) only for the species QED acts on, and only with the table
-      chi_moment = amm_table_loaded .AND. &
+      chi_moment = amm_table_loaded .AND. use_tbmt .AND. &
           (species_list(ispecies)%species_type == c_species_id_electron &
           .OR. species_list(ispecies)%species_type == c_species_id_positron)
 #endif
@@ -527,68 +527,71 @@ CONTAINS
         !    + 2.0_num * ((tau_half_z * tau_half_x + tau_half_y) * uxm &
         !    + (tau_half_z * tau_half_y - tau_half_x) * uym)) * tau) / gamma_mid
 
-        ! The three omega coefficients in Qian (2.46)
-        omega_B = spin_a + 1.0_num / gamma_mid
-        omega_v = spin_a * gamma_mid &
-            / (1.0_num + gamma_mid)
-        omega_E = spin_a + 1.0_num / (1.0_num &
-            + gamma_mid)
+        ! T-BMT precession (control block use_tbmt; off for tests)
+        IF (use_tbmt) THEN
+          ! The three omega coefficients in Qian (2.46)
+          omega_B = spin_a + 1.0_num / gamma_mid
+          omega_v = spin_a * gamma_mid &
+              / (1.0_num + gamma_mid)
+          omega_E = spin_a + 1.0_num / (1.0_num &
+              + gamma_mid)
 
-        ! Multiply by q/mc
-        spin_f1 = part_q * omega_B / part_m
-        spin_f2 = part_q * omega_v / part_m
-        spin_f3 = part_q * omega_E / part_mc
+          ! Multiply by q/mc
+          spin_f1 = part_q * omega_B / part_m
+          spin_f2 = part_q * omega_v / part_m
+          spin_f3 = part_q * omega_E / part_mc
 
-        ! ds/dt = - spin_rotation(aka omega) x s
-        ! spin_rotation = spin_f1*B - spin_f2*beta*B beta
-            !       - spin_f3*beta x E
-            ! where beta = v/c = u
+          ! ds/dt = - spin_rotation(aka omega) x s
+          ! spin_rotation = spin_f1*B - spin_f2*beta*B beta
+              !       - spin_f3*beta x E
+              ! where beta = v/c = u
 
-        ! compute u dot B
-        u_avg_dot_B = ux_avg * bx_part + uy_avg * by_part + uz_avg * bz_part
+          ! compute u dot B
+          u_avg_dot_B = ux_avg * bx_part + uy_avg * by_part + uz_avg * bz_part
 
-        ! As every term involves one field multiplication, a multiplicative
-        ! factor "fac" is used to take care of particle shapes
-        ! A prefactor of dt fac /2 is multiplied to the actual omega in the
-        ! equation.
-        !See later: spin_rotation is actually the "t_omega" vector
-        spin_rotation_x = dtfac * ((spin_f1 * bx_part) &
-            - spin_f2 * u_avg_dot_B * ux_avg &
-            - spin_f3 * (uy_avg * ez_part - uz_avg * ey_part))
-        spin_rotation_y = dtfac * ((spin_f1 * by_part) &
-            - spin_f2 * u_avg_dot_B * uy_avg &
-            - spin_f3 * (uz_avg * ex_part - ux_avg * ez_part))
-        spin_rotation_z = dtfac * ((spin_f1 * bz_part) &
-            - spin_f2 * u_avg_dot_B * uz_avg &
-            - spin_f3 * (ux_avg * ey_part - uy_avg * ex_part))
+          ! As every term involves one field multiplication, a multiplicative
+          ! factor "fac" is used to take care of particle shapes
+          ! A prefactor of dt fac /2 is multiplied to the actual omega in the
+          ! equation.
+          !See later: spin_rotation is actually the "t_omega" vector
+          spin_rotation_x = dtfac * ((spin_f1 * bx_part) &
+              - spin_f2 * u_avg_dot_B * ux_avg &
+              - spin_f3 * (uy_avg * ez_part - uz_avg * ey_part))
+          spin_rotation_y = dtfac * ((spin_f1 * by_part) &
+              - spin_f2 * u_avg_dot_B * uy_avg &
+              - spin_f3 * (uz_avg * ex_part - ux_avg * ez_part))
+          spin_rotation_z = dtfac * ((spin_f1 * bz_part) &
+              - spin_f2 * u_avg_dot_B * uz_avg &
+              - spin_f3 * (ux_avg * ey_part - uy_avg * ex_part))
 
-        ! now perform a Boris-style rotation on the spin vector
-        ! For calculation see my notes
-        ! Define vector t_omega = dt/2 * spin_rotation
-        ! S_updated = S_old + 2/(1+t_omega^2) S' cross t_omega
-        ! where S' = S_old + S_old cross t_omega
-        ! Note that spin_rotation in the code  is actually t_omega
-        spin_f4 = 2.0_num / (1.0_num + spin_rotation_x*spin_rotation_x &
-            + spin_rotation_y * spin_rotation_y &
-            + spin_rotation_z * spin_rotation_z)
+          ! now perform a Boris-style rotation on the spin vector
+          ! For calculation see my notes
+          ! Define vector t_omega = dt/2 * spin_rotation
+          ! S_updated = S_old + 2/(1+t_omega^2) S' cross t_omega
+          ! where S' = S_old + S_old cross t_omega
+          ! Note that spin_rotation in the code  is actually t_omega
+          spin_f4 = 2.0_num / (1.0_num + spin_rotation_x*spin_rotation_x &
+              + spin_rotation_y * spin_rotation_y &
+              + spin_rotation_z * spin_rotation_z)
 
-        spin_primex = part_sx + part_sy * spin_rotation_z &
-            - part_sz * spin_rotation_y
+          spin_primex = part_sx + part_sy * spin_rotation_z &
+              - part_sz * spin_rotation_y
 
-        spin_primey = part_sy + part_sz * spin_rotation_x &
-            - part_sx * spin_rotation_z
+          spin_primey = part_sy + part_sz * spin_rotation_x &
+              - part_sx * spin_rotation_z
 
-        spin_primez = part_sz + part_sx * spin_rotation_y &
-            - part_sy * spin_rotation_x
+          spin_primez = part_sz + part_sx * spin_rotation_y &
+              - part_sy * spin_rotation_x
 
-        current%spin(1) = part_sx + spin_f4 * (spin_primey * spin_rotation_z &
-            - spin_primez * spin_rotation_y)
+          current%spin(1) = part_sx + spin_f4 * (spin_primey * spin_rotation_z &
+              - spin_primez * spin_rotation_y)
 
-        current%spin(2) = part_sy + spin_f4 * (spin_primez * spin_rotation_x &
-            - spin_primex * spin_rotation_z)
+          current%spin(2) = part_sy + spin_f4 * (spin_primez * spin_rotation_x &
+              - spin_primex * spin_rotation_z)
 
-        current%spin(3) = part_sz + spin_f4 * (spin_primex * spin_rotation_y &
-            - spin_primey * spin_rotation_x)
+          current%spin(3) = part_sz + spin_f4 * (spin_primex * spin_rotation_y &
+              - spin_primey * spin_rotation_x)
+        END IF
 #endif
 
 

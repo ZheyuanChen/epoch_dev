@@ -54,6 +54,9 @@ CONTAINS
       spin_second_order_depth = .FALSE.
       spin_final_states = c_spin_final_collapse
       pair_tables = c_pair_tables_unset
+      spin_no_transition = .TRUE.
+      spin_nlcs = c_spin_process_resolved
+      spin_nbw = c_spin_process_resolved
 #endif
     END IF
 #endif
@@ -322,6 +325,24 @@ CONTAINS
       END IF
       RETURN
     END IF
+
+    ! Switches for tests: the survivor (non-transition) updates, and
+    ! each process resolved, unpolarised (as with use_spin_qed = F) or
+    ! off (no events; the survivor updates still use its rate)
+    IF (str_cmp(element, 'spin_no_transition')) THEN
+      spin_no_transition = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'spin_nlcs')) THEN
+      spin_nlcs = as_spin_process(value, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'spin_nbw')) THEN
+      spin_nbw = as_spin_process(value, errcode)
+      RETURN
+    END IF
 #endif
 
     errcode = c_err_unknown_element
@@ -387,9 +408,51 @@ CONTAINS
       END IF
       errcode = c_err_bad_value + c_err_terminate
     END IF
+
+    ! The test switches act on the spin-resolved QED only
+    IF (use_qed .AND. .NOT. use_spin_qed .AND. (.NOT. spin_no_transition &
+        .OR. spin_nlcs /= c_spin_process_resolved &
+        .OR. spin_nbw /= c_spin_process_resolved)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'spin_no_transition, spin_nlcs and spin_nbw ', &
+              'need use_spin_qed=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
 #endif
 #endif
 
   END FUNCTION qed_block_check
+
+
+
+#if defined(SPIN) && defined(PHOTONS)
+  FUNCTION as_spin_process(str_in, err) RESULT(res)
+
+    ! Value of spin_nlcs and spin_nbw: resolved, unpolarised or off
+    CHARACTER(*), INTENT(IN) :: str_in
+    INTEGER, INTENT(INOUT) :: err
+    INTEGER :: res
+
+    res = c_spin_process_resolved
+    IF (str_cmp(str_in, 'resolved')) THEN
+      res = c_spin_process_resolved
+    ELSE IF (str_cmp(str_in, 'unpolarised') &
+        .OR. str_cmp(str_in, 'unpolarized')) THEN
+      res = c_spin_process_unpolarised
+    ELSE IF (str_cmp(str_in, 'off')) THEN
+      res = c_spin_process_off
+    ELSE
+      err = IOR(err, c_err_bad_value)
+    END IF
+
+  END FUNCTION as_spin_process
+#endif
 
 END MODULE deck_qed_block
