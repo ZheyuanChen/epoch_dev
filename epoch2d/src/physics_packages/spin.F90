@@ -204,8 +204,8 @@ CONTAINS
 
 
   ! Read ksi_sokolov_up.table and ksi_sokolov_down.table
-  ! (gen_nlcs_spin_cdf_tables.py), which share the grid of
-  ! ksi_sokolov.table. Call after setup_tables_qed has built log_eta.
+  ! , which share the grid of ksi_sokolov.table. 
+  !Call after setup_tables_qed has built log_eta.
   ! Rank 0 reads, then broadcasts. Called only with use_spin_qed.
   SUBROUTINE setup_nlcs_spin_cdf_tables
 
@@ -390,7 +390,7 @@ CONTAINS
 
   ! Replace the T(chi) column of pairprod.table (Erber's approximation)
   ! with the exact LCFA one from pairprod_lcfa.table
-  ! (gen_pairprod_lcfa_table.py), which must share pairprod.table's
+  ! (Erber 3.3b), which must share pairprod.table's
   ! grid. Called on rank 0 only, inside setup_tables_qed, before the
   ! tables are broadcast; pairprod.table's trident column is untouched.
   SUBROUTINE read_pairprod_lcfa(n, log_chi, log_t)
