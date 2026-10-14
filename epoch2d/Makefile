@@ -528,7 +528,7 @@ epoch2d.o: epoch2d.F90 background_collisions.o balance.o bremsstrahlung.o \
 	$(FC) -c $(FFLAGS) $(FLTCONS) -o $(OBJDIR)/$@ $(PREPROFLAGS) $<
 evaluate.o: evaluate.F90 shunt.o stack.o
 evaluator_blocks.o: evaluator_blocks.F90 custom_parser.o stack.o strings.o
-fields.o: fields.f90 boundary.o
+fields.o: fields.f90 boundary.o evaluate.o
 	$(FC) -c $(FFLAGS) $(FLTCONS) -o $(OBJDIR)/$@ $(PREPROFLAGS) $<
 file_injectors.o: file_injectors.F90 partlist.o utilities.o spin.o
 finish.o: finish.f90 background_collisions.o collisions.o constants.o deck.o \

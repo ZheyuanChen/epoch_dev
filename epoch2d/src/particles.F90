@@ -149,6 +149,8 @@ CONTAINS
     ! Holder of the three omega coefficients in T-BMT
     REAL(num) :: omega_B, omega_v, omega_E
 #endif
+    ! Uniform external fields, scaled like the unnormalised gathers
+    REAL(num) :: ext_e(3), ext_b(3)
     TYPE(particle), POINTER :: current, next
     TYPE(particle_pointer_list), POINTER :: bnd_part_last, bnd_part_next
 
@@ -176,6 +178,9 @@ CONTAINS
     idty = idt * idy * fac
     idtx = idt * idx * fac
     idxy = idx * idy * fac
+
+    ext_e = external_e / fac
+    ext_b = external_b / fac
 
     DO ispecies = 1, n_species
       current => species_list(ispecies)%attached_list%head
@@ -399,6 +404,14 @@ CONTAINS
 #include "triangle/e_part.inc"
 #include "triangle/b_part.inc"
 #endif
+        IF (use_external_fields) THEN
+          ex_part = ex_part + ext_e(1)
+          ey_part = ey_part + ext_e(2)
+          ez_part = ez_part + ext_e(3)
+          bx_part = bx_part + ext_b(1)
+          by_part = by_part + ext_b(2)
+          bz_part = bz_part + ext_b(3)
+        END IF
 
         ! update particle momenta using weighted fields
         uxm = part_ux + cmratio * ex_part

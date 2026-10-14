@@ -57,6 +57,7 @@ CONTAINS
       spin_no_transition = .TRUE.
       spin_nlcs = c_spin_process_resolved
       spin_nbw = c_spin_process_resolved
+      use_chi_dependent_moment = .TRUE.
 #endif
     END IF
 #endif
@@ -91,7 +92,7 @@ CONTAINS
 
     ! Check for chi-dependent anomalous moment table
 #if defined(SPIN) && defined(PHOTONS)
-    IF (rank == 0 .AND. use_qed) THEN
+    IF (rank == 0 .AND. use_qed .AND. use_chi_dependent_moment) THEN
       INQUIRE(file=TRIM(qed_table_location)//'/anomalous_moment.table'&
           , exist=exists)
       IF (.NOT.exists) THEN
@@ -341,6 +342,17 @@ CONTAINS
 
     IF (str_cmp(element, 'spin_nbw')) THEN
       spin_nbw = as_spin_process(value, errcode)
+      ! photon_only exists for NLCS only
+      IF (spin_nbw == c_spin_process_photon_only) &
+          errcode = IOR(errcode, c_err_bad_value)
+      RETURN
+    END IF
+
+    ! a(chi) for leptons in T-BMT with use_qed = T (default), or the
+    ! species' constant moment (for comparison with constant-a theory)
+    IF (str_cmp(element, 'use_chi_dependent_moment') &
+        .OR. str_cmp(element, 'chi_dependent_moment')) THEN
+      use_chi_dependent_moment = as_logical_print(value, element, errcode)
       RETURN
     END IF
 #endif
@@ -435,7 +447,8 @@ CONTAINS
 #if defined(SPIN) && defined(PHOTONS)
   FUNCTION as_spin_process(str_in, err) RESULT(res)
 
-    ! Value of spin_nlcs and spin_nbw: resolved, unpolarised or off
+    ! Value of spin_nlcs and spin_nbw: resolved, unpolarised, off or
+    ! (spin_nlcs only) photon_only
     CHARACTER(*), INTENT(IN) :: str_in
     INTEGER, INTENT(INOUT) :: err
     INTEGER :: res
@@ -448,6 +461,8 @@ CONTAINS
       res = c_spin_process_unpolarised
     ELSE IF (str_cmp(str_in, 'off')) THEN
       res = c_spin_process_off
+    ELSE IF (str_cmp(str_in, 'photon_only')) THEN
+      res = c_spin_process_photon_only
     ELSE
       err = IOR(err, c_err_bad_value)
     END IF

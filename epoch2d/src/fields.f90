@@ -16,6 +16,7 @@
 MODULE fields
 
   USE boundary
+  USE evaluator
 
   IMPLICIT NONE
 
@@ -28,6 +29,27 @@ MODULE fields
   REAL(num) :: deltax = 0.0_num, deltay = 0.0_num
 
 CONTAINS
+
+  SUBROUTINE update_external_fields
+
+    ! Evaluate the uniform external fields (fields block ex_external,
+    ! ..., bz_external) at the current time. Called once per step,
+    ! before QED and the particle push, which both use the values.
+    INTEGER :: i, err
+    REAL(num) :: val(6)
+
+    val = 0.0_num
+    err = c_err_none
+    DO i = 1, 6
+      IF (external_field_set(i)) &
+          val(i) = evaluate(external_field_function(i), err)
+    END DO
+    external_e = val(1:3)
+    external_b = val(4:6)
+
+  END SUBROUTINE update_external_fields
+
+
 
   SUBROUTINE set_field_order(order)
 

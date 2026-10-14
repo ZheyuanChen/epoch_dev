@@ -463,8 +463,8 @@ CONTAINS
       DEALLOCATE(realbuf)
     END IF
 #ifdef SPIN
-      ! Table for a(chi)
-    CALL setup_anomalous_moment_table
+    ! Table for a(chi); without it leptons keep their constant moment
+    IF (use_chi_dependent_moment) CALL setup_anomalous_moment_table
     ! Spin asymmetry A(eta) of the NLCS rate
     IF (use_spin_qed) CALL setup_nlcs_asymmetry_table
     ! K_1/3/K_2/3 and IntK_1/3/K_2/3 for the final spin and polarisation
@@ -612,8 +612,9 @@ CONTAINS
                   species_list(ispecies)%charge, zeta, n_hat, spin_valid)
               a_spin = nlcs_asymmetry(eta)
               x_spin = a_spin * dtau
-              ! spin_nlcs (tests): unpolarised keeps W_bar, off emits
-              ! nothing; the survivor update keeps x_spin either way
+              ! spin_nlcs (tests): unpolarised and photon_only keep
+              ! W_bar, off emits nothing; the survivor update keeps
+              ! x_spin either way (photon_only skips it)
               IF (spin_nlcs == c_spin_process_resolved) THEN
                 dtau = spin_delta_optical_depth(dtau, a_spin, zeta, &
                     spin_second_order_depth)
@@ -647,6 +648,13 @@ CONTAINS
               CALL generate_photon(current, photon_species, eta, zeta, &
                   a_spin, e_at_part, b_at_part, &
                   species_list(ispecies)%charge)
+            ELSE IF (use_spin_qed &
+                .AND. spin_nlcs == c_spin_process_photon_only) THEN
+              ! Spin-averaged spectrum (zeta = 0); generate_photon
+              ! leaves the lepton spin unchanged in this mode
+              CALL generate_photon(current, photon_species, eta, &
+                  0.0_num, a_spin, e_at_part, b_at_part, &
+                  species_list(ispecies)%charge)
             ELSE
               CALL generate_photon(current, photon_species, eta)
             END IF
@@ -657,6 +665,7 @@ CONTAINS
             current%optical_depth = reset_optical_depth()
 #ifdef SPIN
           ELSE IF (use_spin_qed .AND. spin_no_transition &
+              .AND. spin_nlcs /= c_spin_process_photon_only &
               .AND. .NOT. use_continuous_emission) THEN
             ! No emission this step: survivor (non-transition) spin
             IF (spin_valid) CALL lepton_no_emission_update(current%spin, &
@@ -1020,6 +1029,12 @@ CONTAINS
     b_at_part(2) = fac * by_part
     b_at_part(3) = fac * bz_part
 
+    ! Uniform external fields (fields block, for tests)
+    IF (use_external_fields) THEN
+      e_at_part = e_at_part + external_e
+      b_at_part = b_at_part + external_b
+    END IF
+
   END SUBROUTINE field_at_particle
 
 
@@ -1046,7 +1061,7 @@ CONTAINS
     LOGICAL :: samp_photon, make_photon
     TYPE(particle), POINTER :: new_photon
 #ifdef SPIN
-    REAL(num) :: u_mag, xi_stored(3)
+    REAL(num) :: u_mag, xi_stored(3), spin_avg(3)
     LOGICAL :: spin_event
 #endif
 
@@ -1135,10 +1150,20 @@ CONTAINS
     ! is created); lam = photon energy / lepton energy = 2 chi / eta
     spin_event = PRESENT(zeta) .AND. PRESENT(a_spin) &
         .AND. PRESENT(e_field) .AND. PRESENT(b_field) .AND. PRESENT(charge)
-    IF (spin_event) CALL nlcs_final_states(dir_x * u_mag, dir_y * u_mag, &
-        dir_z * u_mag, generating_gamma, e_field, b_field, charge, &
-        photon_energy / (generating_gamma * m0 * c**2), eta, make_photon, &
-        generating_electron%spin, xi_stored)
+    IF (spin_event .AND. spin_nlcs == c_spin_process_photon_only) THEN
+      ! Photon from an unpolarised lepton, summed over its final spin;
+      ! the lepton's own spin is left as it is
+      spin_avg = 0.0_num
+      CALL nlcs_final_states(dir_x * u_mag, dir_y * u_mag, &
+          dir_z * u_mag, generating_gamma, e_field, b_field, charge, &
+          photon_energy / (generating_gamma * m0 * c**2), eta, make_photon, &
+          spin_avg, xi_stored)
+    ELSE IF (spin_event) THEN
+      CALL nlcs_final_states(dir_x * u_mag, dir_y * u_mag, &
+          dir_z * u_mag, generating_gamma, e_field, b_field, charge, &
+          photon_energy / (generating_gamma * m0 * c**2), eta, make_photon, &
+          generating_electron%spin, xi_stored)
+    END IF
 #endif
 
     IF (make_photon) THEN

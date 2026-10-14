@@ -676,6 +676,10 @@ MODULE shared_data
   LOGICAL :: spin_no_transition = .TRUE.
   INTEGER :: spin_nlcs = c_spin_process_resolved
   INTEGER :: spin_nbw = c_spin_process_resolved
+  ! Leptons use the chi-dependent anomalous moment a(chi) in T-BMT
+  ! when use_qed = T (qed block use_chi_dependent_moment; F keeps the
+  ! species' constant moment, for comparison with constant-a theory)
+  LOGICAL :: use_chi_dependent_moment = .TRUE.
 #endif
 #endif
   LOGICAL :: use_qed = .FALSE.
@@ -683,6 +687,15 @@ MODULE shared_data
   ! T-BMT spin precession in the particle push (control block)
   LOGICAL :: use_tbmt = .TRUE.
 #endif
+  ! Spatially uniform external fields, functions of time only (fields
+  ! block ex_external, ..., bz_external; for tests). They are added to
+  ! the fields that particles see in the push and in QED, but not to
+  ! the grid, so they are not evolved, output or seen by the solver.
+  ! Order: ex, ey, ez, bx, by, bz; values refreshed once per step.
+  LOGICAL :: use_external_fields = .FALSE.
+  LOGICAL :: external_field_set(6) = .FALSE.
+  TYPE(primitive_stack), SAVE :: external_field_function(6)
+  REAL(num) :: external_e(3) = 0.0_num, external_b(3) = 0.0_num
   LOGICAL :: use_binary_collisions = .FALSE.
 #ifdef BREMSSTRAHLUNG
   !----------------------------------------------------------------------------

@@ -132,10 +132,14 @@ MODULE constants
   ! Treatment of NLCS and NBW with use_spin_qed (qed block spin_nlcs,
   ! spin_nbw; for tests): resolved, unpolarised (exactly the
   ! use_spin_qed = F treatment of that process, which neither reads
-  ! nor changes spins or polarisations) or off (no events at all)
+  ! nor changes spins or polarisations) or off (no events at all).
+  ! photon_only (NLCS only) resolves the photon polarisation for a
+  ! lepton spin averaged over its initial and summed over its final
+  ! states, and never changes the lepton spin (as Ptarmigan does)
   INTEGER, PARAMETER :: c_spin_process_resolved = 1
   INTEGER, PARAMETER :: c_spin_process_unpolarised = 2
   INTEGER, PARAMETER :: c_spin_process_off = 3
+  INTEGER, PARAMETER :: c_spin_process_photon_only = 4
 
 #endif
 
