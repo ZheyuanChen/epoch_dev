@@ -653,6 +653,11 @@ MODULE shared_data
   CHARACTER(LEN=string_length) :: qed_table_location
   LOGICAL :: use_continuous_emission = .FALSE., use_classical_emission=.FALSE.
   REAL(num) :: photon_sample_fraction = 1.0_num
+  ! Discrete emission followed event by event within a step (qed block
+  ! use_emission_substeps): several emissions per step, and the spin
+  ! survivor update split at each emission. F: EPOCH's legacy step (at
+  ! most one emission, the optical-depth overshoot discarded).
+  LOGICAL :: use_emission_substeps = .TRUE.
   LOGICAL :: use_LBW = .FALSE.
   LOGICAL :: use_LBW_diff = .TRUE.
   REAL(num) :: LBW_amp_factor = 1.0_num

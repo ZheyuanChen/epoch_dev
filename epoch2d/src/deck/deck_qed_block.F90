@@ -45,6 +45,7 @@ CONTAINS
       use_radiation_reaction = .TRUE.
       produce_photons = .FALSE.
       photon_dynamics = .FALSE.
+      use_emission_substeps = .TRUE.
       use_binary_collisions = .FALSE.
       use_LBW = .FALSE.
       use_LBW_diff = .TRUE.
@@ -280,6 +281,13 @@ CONTAINS
 
     IF(str_cmp(element, 'LBW_differential_cross')) THEN
       use_LBW_diff = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Emission followed event by event within a step (default), or
+    ! EPOCH's legacy step: at most one emission, overshoot discarded
+    IF (str_cmp(element, 'use_emission_substeps')) THEN
+      use_emission_substeps = as_logical_print(value, element, errcode)
       RETURN
     END IF
 

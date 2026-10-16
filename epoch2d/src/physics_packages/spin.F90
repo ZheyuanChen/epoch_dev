@@ -44,8 +44,7 @@ MODULE spin
   REAL(num), ALLOCATABLE :: nlcs_cdf_up(:,:), nlcs_cdf_down(:,:)
 
   ! R1 = K_1/3(x)/K_2/3(x) and R2 = IntK_1/3(x)/K_2/3(x) as log10 R on
-  ! a uniform log10(x) grid (bessel_k.table): the Bessel content of
-  ! every spin- and polarisation-resolved final-state quantity
+  ! a uniform log10(x) grid (bessel_k.table)
   INTEGER :: n_bessel
   REAL(num) :: bessel_log_x_min, bessel_log_x_max, bessel_idlog
   REAL(num), ALLOCATABLE :: bessel_log_r1(:), bessel_log_r2(:)
@@ -206,7 +205,7 @@ CONTAINS
   ! Read ksi_sokolov_up.table and ksi_sokolov_down.table
   ! , which share the grid of ksi_sokolov.table. 
   !Call after setup_tables_qed has built log_eta.
-  ! Rank 0 reads, then broadcasts. Called only with use_spin_qed.
+  ! Called only with use_spin_qed.
   SUBROUTINE setup_nlcs_spin_cdf_tables
 
     CALL read_cdf_table('ksi_sokolov_up.table', nlcs_cdf_up)
@@ -249,9 +248,9 @@ CONTAINS
 
 
   ! Read the R1 and R2 columns of bessel_k.table
-  ! (gen_bessel_k_table.py); the absolute K columns that follow on each
-  ! row are skipped. The grid is uniform in log10(x).
-  ! Rank 0 reads, then broadcasts. Called only with use_spin_qed.
+  ! the absolute K columns that follow on each row are skipped.
+  ! The grid is uniform in log10(x).
+  ! Called only with use_spin_qed.
   SUBROUTINE setup_bessel_k_table
 
     INTEGER :: i
@@ -323,9 +322,8 @@ CONTAINS
 
 
   ! Read nbw_energy_split_par.table and nbw_energy_split_perp.table
-  ! (gen_nbw_energy_split_tables.py), which share one grid: uniform in
-  ! log10(chi), electron fraction uniform in [0, 1].
-  ! Rank 0 reads, then broadcasts. Called only with use_spin_qed.
+  ! which share one grid: uniform in log10(chi), electron fraction
+  ! uniform in [0, 1]. Called only with use_spin_qed.
   SUBROUTINE setup_nbw_split_tables
 
     INTEGER :: i, n_chi, n_split
@@ -388,11 +386,10 @@ CONTAINS
 
 
 
-  ! Replace the T(chi) column of pairprod.table (Erber's approximation)
-  ! with the exact LCFA one from pairprod_lcfa.table
+  ! Replace the T(chi) column of pairprod.table (Erber's approximation
+  ! 3.3d) with the exact LCFA one from pairprod_lcfa.table
   ! (Erber 3.3b), which must share pairprod.table's
-  ! grid. Called on rank 0 only, inside setup_tables_qed, before the
-  ! tables are broadcast; pairprod.table's trident column is untouched.
+  ! grid. pairprod.table's trident column is untouched.
   SUBROUTINE read_pairprod_lcfa(n, log_chi, log_t)
 
     INTEGER, INTENT(IN) :: n
@@ -511,7 +508,7 @@ CONTAINS
     ! spectrum otherwise. With W = W_up (1 + zeta)/2 + W_down (1 - zeta)/2
     ! and W_up/down = W_bar (1 +- A), the weight of the down part is
     ! (1 - zeta)(1 - A) / (2 (1 + A zeta)). Exact, since the spectrum
-    ! is linear in zeta (Qian's Eq. 3.3 with a fresh random number).
+    ! is linear in zeta (Qian's eqn. 3.3).
     REAL(num), INTENT(IN) :: zeta, a
     REAL(num) :: p_down
 
@@ -524,7 +521,7 @@ CONTAINS
 
   FUNCTION nbw_asymmetry(chi) RESULT(a)
 
-    ! A(chi) = (W_perp - W_par) / (W_perp + W_par) of NBW, chi EPOCH's
+    ! A(chi) = (W_perp - W_par) / (W_perp + W_par) of NBW, chi beingEPOCH's
     ! photon parameter: log-log linear interpolation inside the table,
     ! clamped outside it (A -> 1/3 as chi -> 0, A -> 1/5 as chi -> Inf)
     REAL(num), INTENT(IN) :: chi
@@ -561,7 +558,7 @@ CONTAINS
     ! spectrum otherwise. With W = W_par (1 + xi1)/2 + W_perp (1 - xi1)/2
     ! and W_par/perp = W_bar (1 -+ A), the weight of the par part is
     ! (1 + xi1)(1 - A) / (2 (1 - A xi1)). Exact, since the spectrum is
-    ! linear in xi1.
+    ! linear in xi1. (Qian eqn. 3.11)
     REAL(num), INTENT(IN) :: xi1, a
     REAL(num) :: p_par
 
@@ -574,7 +571,7 @@ CONTAINS
 
   SUBROUTINE bessel_ratios(x, r1, r2)
 
-    ! R1 = K_1/3(x)/K_2/3(x) and R2 = IntK_1/3(x)/K_2/3(x), both in
+    ! R1 = K_1/3(x)/K_2/3(x) and R2 = IntK_1/3(x)/K_2/3(x), both on
     ! [0, 1]: linear interpolation of log10 R in log10 x inside
     ! bessel_k.table, the two-term expansions of gen_bessel_k_table.py
     ! outside it (they join the table to ~1e-7 without rescaling)
@@ -617,19 +614,20 @@ CONTAINS
 
 
 
-  ! nlcs_w_g and nlcs_photon_f are the NLCS final-state functions of
-  ! polarised_lcfa.py (Qian's thesis Appendix A.1 rederived in EPOCH's
-  ! bases from T21, three-vector blocks contracted in subscript order).
+  ! nlcs_w_g and nlcs_photon_f are the NLCS final-state functions 
+  ! (derived from Torgrimsson 2021. c.f. Qian's Appendix A.1. Note
+  ! that the basis in Qian's is slightly different from EPOCH's).
   ! Inputs: lam = photon energy / lepton energy, 0 <= lam < 1;
-  ! r1, r2 from bessel_ratios at x = 2 lam / (3 chi (1 - lam)), chi the
-  ! emitter's (EPOCH's eta); qs the sign of the emitter's charge;
+  ! r1, r2 from bessel_ratios at x = 2 lam / (3 chi (1 - lam)), chi 
+  ! (EPOCH's eta); qs the sign of the emitter's charge;
   ! si, sf the initial and final spins as components on the lepton axes
-  ! (eps_hat, beta_hat, v_hat) of lepton_spin_axes. All outputs share
-  ! the positive factor K_2/3 / (pi sqrt 3), which cancels in every
-  ! ratio. For a photon of energy lam, summed over final spins and
+  ! (eps_hat, beta_hat, v_hat) of lepton_spin_axes. 
+  ! For a photon of energy lam, summed over final spins and
   ! photon polarisations, the emission density is proportional to w;
   ! resolved in sf and the photon Stokes vector xi_obs it is
   ! proportional to F0 + xi_obs . F, with F0 = w + sf . g.
+  ! For reference see Qian's 3.2.1 and appendix A.1, 
+  ! and Torgrimsson 2021 (42)-(50). 
   SUBROUTINE nlcs_w_g(lam, r1, r2, qs, si, w, g)
 
     ! w and g: the final spin, summed over photon polarisations, has
@@ -686,9 +684,10 @@ CONTAINS
 
   SUBROUTINE nbw_w0_j_m(s3, r1, r2, xi, w0, je, jp, m)
 
-    ! NBW pair-spin functions of polarised_lcfa.py (Qian's thesis
-    ! Appendix A.2 rederived in EPOCH's bases from T21, blocks contracted
-    ! in subscript order). Inputs: s3 = positron energy / photon energy,
+    ! NBW pair-spin functions 
+    ! (derived from Torgrimsson 2021. c.f. Qian's Appendix A.2. Note
+    ! that the basis in Qian's is slightly different from EPOCH's)
+    ! Inputs: s3 = positron energy / photon energy,
     ! 0 < s3 < 1 (the electron has s2 = 1 - s3); r1, r2 from
     ! bessel_ratios at x = 1 / (3 chi s2 s3), chi EPOCH's photon
     ! parameter; xi the photon's observed Stokes vector (xi_obs). Spins
@@ -699,7 +698,7 @@ CONTAINS
     ! proportional to
     !   w0 + se . je + sp . jp + sp . (m se),
     ! with m(a,c) multiplying sp_a se_c (positron index first; T21's
-    ! positron label vector is -sp, handled in polarised_lcfa.py).
+    ! positron label vector is -sp).
     ! Summed over the pair spins it is 4 w0, so w0 is the spectrum
     ! (rho - xi1) K_2/3 + IntK_1/3 in units of K_2/3. All outputs share
     ! the positive factor K_2/3 / (pi sqrt 3).
@@ -840,8 +839,9 @@ CONTAINS
       RESULT(dtau)
 
     ! Optical-depth decrement given the spin-averaged one, dtau0 =
-    ! W_bar dt. First order: dtau = dtau0 (1 + A zeta). Second order:
-    ! the exact two-state survival probability,
+    ! W_bar dt. 
+    ! First order: dtau = dtau0 (1 + A zeta). 
+    !  Second order: the exact two-state survival probability,
     ! dtau = dtau0 - ln(cosh x - zeta sinh x), x = A dtau0.
     ! The two agree for zeta = +-1 and differ at O(x^2) otherwise.
     ! See notes for theory
@@ -867,15 +867,40 @@ CONTAINS
 
 
 
+  FUNCTION spin_event_fraction(tau, dtau0, a, zeta) RESULT(g)
+
+    ! Fraction g of a (sub)step at which an optical depth tau runs out
+    ! for the exact two-state decrement (spin_second_order_depth),
+    ! D(g) = g dtau0 - ln(cosh(g x) - zeta sinh(g x)),  x = a dtau0,
+    ! for 0 < tau < D(1). D increases: D'(g) = dtau0 (1 + a zeta_g),
+    ! zeta_g = (zeta - t) / (1 - t zeta), t = tanh(g x), the survivor's
+    ! zeta at g. 
+    REAL(num), INTENT(IN) :: tau, dtau0, a, zeta
+    REAL(num) :: g, d, t, zeta_g
+    INTEGER :: i
+
+    g = tau / spin_delta_optical_depth(dtau0, a, zeta, .TRUE.)
+    DO i = 1, 4
+      d = spin_delta_optical_depth(g * dtau0, a, zeta, .TRUE.) - tau
+      t = TANH(g * a * dtau0)
+      zeta_g = (zeta - t) / (1.0_num - t * zeta)
+      g = g - d / (dtau0 * (1.0_num + a * zeta_g))
+      g = MIN(MAX(g, 0.0_num), 1.0_num)
+    END DO
+
+  END FUNCTION spin_event_fraction
+
+
+
   SUBROUTINE lepton_no_emission_update(spin, n_hat, x)
 
     ! Spin of a lepton that did not emit in the step: Qian's quantum
-    ! non-transition update (thesis section 3.3), in the exact
-    ! finite-step form of T21 Eqs. (133)-(134). Leptons whose spin
+    ! non-transition update (section 3.3), T21 Eqs. (133)-(134).
+    ! A brief explnation: Leptons whose spin
     ! state emits less (zeta = -1) are more likely to survive, so
-    !   s' = [(zeta - t) n_hat + sqrt(1 - t^2) s_perp] / (1 - t zeta),
-    ! zeta = s . n_hat, s_perp = s - zeta n_hat, t = tanh x, with
-    ! x = A W_bar dt (A from nlcs_asymmetry, W_bar dt the spin-averaged
+    !  s' = [(zeta - t) n_hat + sqrt(1 - t^2) s_perp] / (1 - t zeta),
+    ! where zeta = s . n_hat, s_perp = s - zeta n_hat, t = tanh x, with
+    ! x = A W_bar dt (A the nlcs_asymmetry, W_bar dt the spin-averaged
     ! optical-depth decrement) and n_hat = qs beta_hat. This is the
     ! normalised survivor state whose norm is the survival probability
     ! used by spin_delta_optical_depth. Pure states stay pure, |s| <= 1
@@ -901,18 +926,16 @@ CONTAINS
 
     ! The photon equivalence of the above
     ! Stokes vector of a photon that did not decay (NBW) in the step,
-    ! in the observation basis: T21 Eqs. (147)-(150), SPIN_DOCUMENTATION
-    ! section 2.5. The same algebra as lepton_no_emission_update with
+    ! in the observation basis: T21 Eqs. (147)-(150)
+    ! The same algebra as lepton_no_emission_update with
     ! the Stokes axis xi_1 in place of n_hat: photons polarised parallel
     ! to E_hat (xi_1 = +1) decay less, so with t = tanh nu,
     ! nu = (W_perp - W_par) dt / 2 (dichroism),
-    !   D = 1 + t xi_1,  xi_1' = (xi_1 + t) / D,
+    ! D = 1 + t xi_1,  xi_1' = (xi_1 + t) / D,
     ! and (xi_3, xi_2) rotate by the birefringence phase phi (T21 Eq.
     ! 149) and shrink by sqrt(1 - t^2) / D. Pure states stay pure;
     ! |xi| <= 1 is kept. Convert stored -> observed before and observed
     ! -> stored after (pol_stored_to_obs, pol_obs_to_stored).
-    ! Not called yet: it needs the NBW asymmetry W_perp/W_par and, for
-    ! phi /= 0, a birefringence table.
     REAL(num), INTENT(IN) :: xi_obs(3), t
     REAL(num), INTENT(IN), OPTIONAL :: phi
     REAL(num) :: xi_new(3), d, amp, cphi, sphi
@@ -933,8 +956,7 @@ CONTAINS
 
 
 
-  ! The following four helpers implement Algorithms A, R and P in
-  ! SPIN_DOCUMENTATION.md. They do not gather fields or change particles.
+  ! Four helpers
   SUBROUTINE compute_local_field_axes(px_photon, py_photon, pz_photon, &
       ex_part, ey_part, ez_part, bx_part, by_part, bz_part, &
       n, e_hat, b_hat, valid, charge_sign)
@@ -1063,24 +1085,38 @@ CONTAINS
 
     ! Final lepton spin and photon Stokes vector of an NLCS emission
     ! (Qian's thesis section 3, Appendix A.1, in EPOCH's bases).
-    ! Inputs: the emitter before recoil (u = p / (m c) and its Lorentz
-    ! factor), the SI fields at it, its charge (only the sign is used),
-    ! the photon energy fraction lam and EPOCH's eta (the emitter's chi).
+    ! Inputs: the lepton before recoil (u = p / (m c) and its Lorentz
+    ! factor), the fields at it, the charge (only the sign is used),
+    ! the photon energy fraction lam and EPOCH's eta (aka chi_e).
     ! spin is always updated, so the lepton changes even when the photon
     ! is below photon_energy_min or not sampled. xi_stored is computed
     ! only if want_photon; otherwise, or if the axes are undefined, it is
     ! zero (and spin is unchanged in the latter case).
     !  1. Lepton axes (eps_hat, beta_hat, v_hat) from lepton_spin_axes;
     !     si = (s.eps_hat, s.beta_hat, s.v_hat).
-    !  2. R1, R2 at x = 2 lam / (3 eta (1 - lam)); w, g (nlcs_w_g).
+    !  2. R1, R2 at x = 2 lam / (3 eta (1 - lam)); w, g from nlcs_w_g.
     !  3. Final spin. spin_final_states (qed block) selects
     !     collapse: s_f = +-g_hat (the SQA) with P(+) = (1 + |g|/w)/2,
-    !               one random number;
+    !               one more random number is used;
     !     mean:     s_f = g/w.
-    !  4. Photon (nlcs_photon_f). collapse: F, F0 given the s_f just
-    !     drawn, xi_obs = +-F_hat (the PQA) with P(+) = (1 + |F|/F0)/2,
-    !     a second random number; mean: xi_obs = F_bar/w (summed over
-    !     s_f; not F/F0 at s_f = g/w).
+    !     The collapse (basically Qian's method) vs mean is still under
+    !     debate. The default is collapse method. Note that the collapse
+    !     method correlates the polarisation with the final lepton spin.
+    !     Personally, I think the mean method is better in the sense that
+    !     it preserves the Bloch vector of the density matrix and carries
+    !     it in the following simulation. That is, we do not perform a 
+    !     quantum measurement and do not collapse the spin/pol to a 
+    !     given axis. Note that in the mean method, the vector length is
+    !     not in general kept at unity, in which case the physical meaning
+    !     of it becomes the degree of polarisation instead of physical
+    !     spin/pol, which is ok but caution is needed.
+    !  4. Photon (nlcs_photon_f). 
+    !      collapse: F, F0 given the s_f just drawn,  
+    !     xi_obs = +-F_hat (the PQA) with P(+) = (1 + |F|/F0)/2,
+    !     a second random number is used 
+    !     mean: xi_obs = F_bar/w (summed over s_f; not F/F0 at s_f = g/w).
+    !     note that 2 more random numbers are used in the collapse method
+    !     which slows the program down.
     !  5. The photon moves along v_hat with E_hat = qs eps_hat (its sign
     !     does not matter): xi_stored from reference_axis and
     !     pol_obs_to_stored.
@@ -1163,11 +1199,12 @@ CONTAINS
       s_electron, spin_electron, spin_positron)
 
     ! Spins of the pair created by an NBW decay (Qian's thesis section
-    ! 3, Appendix A.2, in EPOCH's bases). Inputs: the photon momentum,
-    ! the SI fields at it, its observed Stokes vector xi_obs (before
-    ! this step's survivor update), EPOCH's photon chi and the electron
-    ! energy fraction s_electron. Outputs are lab vectors; both are zero
-    ! (unpolarised) if the axes are undefined.
+    ! 3, Appendix A.2, in EPOCH's bases). 
+    ! Inputs: the photon momentum, the fields at it, its observed 
+    !  Stokes vector xi_obs (before this step's survivor update), 
+    !  EPOCH's photon chi (note the 1/2 prefactor) and the electron
+    !  energy fraction s_electron. Outputs are lab vectors; both are zero
+    !  (unpolarised) if the axes are undefined.
     !  1. Axes (eps_hat, beta_hat, v_hat) along the photon;
     !     R1, R2 at x = 1 / (3 chi s2 s3); w0, je, jp, m (nbw_w0_j_m).
     !  2. Electron. spin_final_states (qed block) selects
