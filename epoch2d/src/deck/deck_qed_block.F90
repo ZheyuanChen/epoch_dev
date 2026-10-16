@@ -59,6 +59,7 @@ CONTAINS
       spin_nlcs = c_spin_process_resolved
       spin_nbw = c_spin_process_resolved
       use_chi_dependent_moment = .TRUE.
+      use_nlcs_quantile_tables = .TRUE.
 #endif
     END IF
 #endif
@@ -361,6 +362,13 @@ CONTAINS
     IF (str_cmp(element, 'use_chi_dependent_moment') &
         .OR. str_cmp(element, 'chi_dependent_moment')) THEN
       use_chi_dependent_moment = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! NLCS photon energies of spin-resolved events: quantile tables
+    ! (default) or the legacy CDFs on the grid of ksi_sokolov.table
+    IF (str_cmp(element, 'use_nlcs_quantile_tables')) THEN
+      use_nlcs_quantile_tables = as_logical_print(value, element, errcode)
       RETURN
     END IF
 #endif

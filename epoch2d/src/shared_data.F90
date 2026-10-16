@@ -653,10 +653,13 @@ MODULE shared_data
   CHARACTER(LEN=string_length) :: qed_table_location
   LOGICAL :: use_continuous_emission = .FALSE., use_classical_emission=.FALSE.
   REAL(num) :: photon_sample_fraction = 1.0_num
+  ! use_emission_subsetps:
   ! Discrete emission followed event by event within a step (qed block
   ! use_emission_substeps): several emissions per step, and the spin
   ! survivor update split at each emission. F: EPOCH's legacy step (at
   ! most one emission, the optical-depth overshoot discarded).
+  ! This is independent of the use of spin, but it is highly recommended
+  ! with spin+qed.
   LOGICAL :: use_emission_substeps = .TRUE.
   LOGICAL :: use_LBW = .FALSE.
   LOGICAL :: use_LBW_diff = .TRUE.
@@ -670,13 +673,21 @@ MODULE shared_data
   ! depend on the lepton spin; spin_second_order_depth uses the exact
   ! two-state survival probability in the optical-depth decrement.
   ! spin_final_states: c_spin_final_collapse or c_spin_final_mean.
+  ! The collapse and mean final state sampling methods are described
+  ! in more details in the user maunel.
   LOGICAL :: use_spin_qed = .FALSE., spin_second_order_depth = .FALSE.
   INTEGER :: spin_final_states = c_spin_final_collapse
   ! pair_tables: c_pair_tables_legacy or c_pair_tables_lcfa (resolved
   ! from c_pair_tables_unset when the qed block is finalised)
+  ! This refers to Erber (1961) eqn (3.3d) vs (3.3b). The former, used
+  ! by EPOCH previously, is an analytical approximation of the latter.
+  ! There is no reason not to use the latter now that it's available.
+  ! This switch is left for back-compatibility.
   INTEGER :: pair_tables = c_pair_tables_unset
   ! Switches for tests (qed block): spin_no_transition applies the
-  ! survivor (non-transition) updates; spin_nlcs and spin_nbw are
+  ! survivor (non-transition) updates--when it's T, the spin(pol)
+  ! will be updated when there is no NLCS(NBW) event happening.
+  ! spin_nlcs and spin_nbw are
   ! c_spin_process_resolved, _unpolarised or _off
   LOGICAL :: spin_no_transition = .TRUE.
   INTEGER :: spin_nlcs = c_spin_process_resolved
@@ -685,11 +696,20 @@ MODULE shared_data
   ! when use_qed = T (qed block use_chi_dependent_moment; F keeps the
   ! species' constant moment, for comparison with constant-a theory)
   LOGICAL :: use_chi_dependent_moment = .TRUE.
+  ! Photon energies of spin-resolved NLCS events from the quantile
+  ! tables nlcs_quantile_up/down.table (qed block
+  ! use_nlcs_quantile_tables, default) or, with F, from the legacy
+  ! CDFs ksi_sokolov_up/down.table on the grid of ksi_sokolov.table
+  ! Note that legacy here refers to the older spin EPOCH/
+  LOGICAL :: use_nlcs_quantile_tables = .TRUE.
 #endif
 #endif
   LOGICAL :: use_qed = .FALSE.
 #ifdef SPIN
   ! T-BMT spin precession in the particle push (control block)
+  ! Note that qed is not required for this (although the chi-dependent)
+  ! anomalous magnetic dipole moment, when qed is activated, affects
+  ! the T-BMT.
   LOGICAL :: use_tbmt = .TRUE.
 #endif
   ! Spatially uniform external fields, functions of time only (fields

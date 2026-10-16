@@ -494,8 +494,15 @@ CONTAINS
     DEALLOCATE(chimin_table)
 
 #ifdef SPIN
-    ! Spin-resolved photon-energy CDFs, on the grid just built
-    IF (use_spin_qed) CALL setup_nlcs_spin_cdf_tables
+    ! Spin-resolved photon energies: quantile tables, or the legacy CDFs
+    ! on the grid just built
+    IF (use_spin_qed) THEN
+      IF (use_nlcs_quantile_tables) THEN
+        CALL setup_nlcs_quantile_tables
+      ELSE
+        CALL setup_nlcs_spin_cdf_tables
+      END IF
+    END IF
 #endif
 
   END SUBROUTINE setup_tables_qed
@@ -1263,8 +1270,8 @@ CONTAINS
     LOGICAL :: samp_photon, make_photon
     TYPE(particle), POINTER :: new_photon
 #ifdef SPIN
-    REAL(num) :: u_mag, xi_stored(3), spin_avg(3)
-    LOGICAL :: spin_event
+    REAL(num) :: u_mag, xi_stored(3), spin_avg(3), chi_photon
+    LOGICAL :: spin_event, spin_down
 #endif
 
     mag_p = MAX(SQRT(generating_electron%part_p(1)**2 &
@@ -1289,7 +1296,17 @@ CONTAINS
     IF (PRESENT(zeta) .AND. PRESENT(a_spin)) THEN
       ! W = W_up (1 + zeta)/2 + W_down (1 - zeta)/2: pick the spectrum
       ! by its weight at this step (exact, by linearity in zeta)
-      IF (random() < nlcs_down_probability(zeta, a_spin)) THEN
+      spin_down = random() < nlcs_down_probability(zeta, a_spin)
+      IF (use_nlcs_quantile_tables) THEN
+        IF (spin_down) THEN
+          chi_photon = nlcs_quantile_chi(rand_temp, eta, nlcs_q_down)
+        ELSE
+          chi_photon = nlcs_quantile_chi(rand_temp, eta, nlcs_q_up)
+        END IF
+        ! As in calculate_photon_energy
+        photon_energy = (2.0_num * chi_photon / eta) * generating_gamma &
+            * m0 * c**2
+      ELSE IF (spin_down) THEN
         photon_energy = calculate_photon_energy(rand_temp, eta, &
             generating_gamma, nlcs_cdf_down)
       ELSE

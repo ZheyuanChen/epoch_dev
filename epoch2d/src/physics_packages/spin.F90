@@ -43,6 +43,15 @@ MODULE spin
   ! find_value_from_table_alt like p_photon_energy
   REAL(num), ALLOCATABLE :: nlcs_cdf_up(:,:), nlcs_cdf_down(:,:)
 
+  ! The same photon energies as quantiles (nlcs_quantile_up/down.table,
+  ! use_nlcs_quantile_tables): log10 chi at the probabilities nlcs_q_p,
+  ! stored as nlcs_q_up(j, i) for row i, uniform in log10(eta) from
+  ! nlcs_q_log_eta_min in steps nlcs_q_dlog; sampled by
+  ! nlcs_quantile_chi
+  INTEGER :: nlcs_q_n_eta, nlcs_q_n_p
+  REAL(num) :: nlcs_q_log_eta_min, nlcs_q_log_eta_max, nlcs_q_dlog
+  REAL(num), ALLOCATABLE :: nlcs_q_p(:), nlcs_q_up(:,:), nlcs_q_down(:,:)
+
   ! R1 = K_1/3(x)/K_2/3(x) and R2 = IntK_1/3(x)/K_2/3(x) as log10 R on
   ! a uniform log10(x) grid (bessel_k.table)
   INTEGER :: n_bessel
@@ -245,6 +254,156 @@ CONTAINS
 
   END SUBROUTINE setup_nlcs_spin_cdf_tables
 
+  ! This table has better resolution than the old one, making the NLCS
+  ! momentum sampling more accurate but increasing the computation cost
+  ! Read nlcs_quantile_up.table and nlcs_quantile_down.table.
+  ! which must share their eta rows and probabilities. 
+  ! Called only with use_spin_qed and use_nlcs_quantile_tables.
+  SUBROUTINE setup_nlcs_quantile_tables
+
+    INTEGER :: ibuf(2)
+    REAL(num) :: buf(2)
+
+    IF (rank == 0) THEN
+      CALL read_quantile_table('nlcs_quantile_up.table', nlcs_q_up, .TRUE.)
+      CALL read_quantile_table('nlcs_quantile_down.table', nlcs_q_down, &
+          .FALSE.)
+    END IF
+
+    ibuf = (/ nlcs_q_n_eta, nlcs_q_n_p /)
+    CALL MPI_BCAST(ibuf, 2, MPI_INTEGER, 0, comm, errcode)
+    nlcs_q_n_eta = ibuf(1)
+    nlcs_q_n_p = ibuf(2)
+    buf = (/ nlcs_q_log_eta_min, nlcs_q_log_eta_max /)
+    CALL MPI_BCAST(buf, 2, mpireal, 0, comm, errcode)
+    nlcs_q_log_eta_min = buf(1)
+    nlcs_q_log_eta_max = buf(2)
+    IF (rank /= 0) THEN
+      ALLOCATE(nlcs_q_p(nlcs_q_n_p))
+      ALLOCATE(nlcs_q_up(nlcs_q_n_p, nlcs_q_n_eta))
+      ALLOCATE(nlcs_q_down(nlcs_q_n_p, nlcs_q_n_eta))
+    END IF
+    CALL MPI_BCAST(nlcs_q_p, nlcs_q_n_p, mpireal, 0, comm, errcode)
+    CALL MPI_BCAST(nlcs_q_up, nlcs_q_n_p * nlcs_q_n_eta, mpireal, 0, comm, &
+        errcode)
+    CALL MPI_BCAST(nlcs_q_down, nlcs_q_n_p * nlcs_q_n_eta, mpireal, 0, &
+        comm, errcode)
+    nlcs_q_dlog = (nlcs_q_log_eta_max - nlcs_q_log_eta_min) &
+        / REAL(nlcs_q_n_eta - 1, num)
+
+  CONTAINS
+
+    SUBROUTINE read_quantile_table(name, q, first)
+
+      ! Header: n_eta, n_p, log10 eta_min, log10 eta_max; then the n_p
+      ! probabilities, then one row of n_p values log10 chi per eta.
+      ! The first table sets the grid, the second must match it.
+      CHARACTER(LEN=*), INTENT(IN) :: name
+      REAL(num), ALLOCATABLE, INTENT(INOUT) :: q(:,:)
+      LOGICAL, INTENT(IN) :: first
+      INTEGER :: n_eta, n_p, ieta, j
+      REAL(num) :: lmin, lmax
+      REAL(num), ALLOCATABLE :: p(:)
+      LOGICAL :: bad
+
+      OPEN(unit=lu, file=TRIM(qed_table_location) // '/' // name, &
+          status='OLD')
+      READ(lu,*) n_eta, n_p, lmin, lmax
+      ALLOCATE(p(n_p))
+      READ(lu,*) (p(j), j = 1, n_p)
+      IF (first) THEN
+        nlcs_q_n_eta = n_eta
+        nlcs_q_n_p = n_p
+        nlcs_q_log_eta_min = lmin
+        nlcs_q_log_eta_max = lmax
+        ALLOCATE(nlcs_q_p(n_p))
+        nlcs_q_p = p
+        bad = n_eta < 2 .OR. n_p < 2 .OR. lmax <= lmin
+        ! The lookup needs p from 0 to 1, strictly increasing
+        IF (.NOT. bad) bad = p(1) /= 0.0_num .OR. p(n_p) /= 1.0_num &
+            .OR. ANY(p(2:n_p) <= p(1:n_p-1))
+      ELSE
+        bad = n_eta /= nlcs_q_n_eta .OR. n_p /= nlcs_q_n_p &
+            .OR. ABS(lmin - nlcs_q_log_eta_min) > 1.0e-8_num &
+            .OR. ABS(lmax - nlcs_q_log_eta_max) > 1.0e-8_num
+        IF (.NOT. bad) bad = ANY(p /= nlcs_q_p)
+      END IF
+      IF (bad) THEN
+        PRINT*, '*** ERROR ***'
+        PRINT*, TRIM(name), ' has a bad header or probability grid, or ', &
+            'does not match nlcs_quantile_up.table'
+        CALL abort_code(c_err_bad_value)
+      END IF
+      ALLOCATE(q(n_p, n_eta))
+      DO ieta = 1, n_eta
+        READ(lu,*) (q(j,ieta), j = 1, n_p)
+      END DO
+      CLOSE(unit=lu)
+      DEALLOCATE(p)
+
+    END SUBROUTINE read_quantile_table
+
+  END SUBROUTINE setup_nlcs_quantile_tables
+
+
+
+  ! chi (chi_gamma / 2) of an NLCS photon from
+  ! the quantile table q (nlcs_q_up or nlcs_q_down) at the random
+  ! number p in [0, 1). The rule is that of find_value_from_table_alt
+  ! with the probabilities common to all rows: log10 chi is linear in p
+  ! between the bracketing probabilities, in each of the two rows
+  ! around eta, and the two are blended linearly in log10 eta. Below the
+  ! table chi scales as eta^2 from its first row, as for
+  ! ksi_sokolov.table; above it the last row is used.
+  FUNCTION nlcs_quantile_chi(p, eta, q) RESULT(chi)
+
+    REAL(num), INTENT(IN) :: p, eta
+    REAL(num), INTENT(IN) :: q(:,:)
+    REAL(num) :: chi
+    REAL(num) :: x, fx, fp, y_lt, y_gt, scale
+    INTEGER :: i, j1, j2, jm
+    LOGICAL, SAVE :: warning = .TRUE.
+
+    x = LOG10(eta)
+    scale = 1.0_num
+    IF (x < nlcs_q_log_eta_min) THEN
+      scale = (eta / 10.0_num**nlcs_q_log_eta_min)**2
+      x = nlcs_q_log_eta_min
+    ELSE IF (x > nlcs_q_log_eta_max) THEN
+      IF (warning .AND. rank == 0) THEN
+        PRINT*,'*** WARNING ***'
+        PRINT*,'eta above the range of the NLCS quantile tables.'
+        PRINT*,'Using truncated value. No more warnings will be issued.'
+        warning = .FALSE.
+      END IF
+      x = nlcs_q_log_eta_max
+    END IF
+
+    ! Row i and i + 1 around x, 1 <= i <= n_eta - 1, and 0 <= fx <= 1
+    fx = (x - nlcs_q_log_eta_min) / nlcs_q_dlog
+    i = MIN(INT(fx) + 1, nlcs_q_n_eta - 1)
+    fx = fx - REAL(i - 1, num)
+
+    ! Bisection: nlcs_q_p(j1) <= p < nlcs_q_p(j2) = nlcs_q_p(j1 + 1);
+    ! nlcs_q_p runs from 0 to 1
+    j1 = 1
+    j2 = nlcs_q_n_p
+    DO WHILE (j2 - j1 > 1)
+      jm = (j1 + j2) / 2
+      IF (nlcs_q_p(jm) <= p) THEN
+        j1 = jm
+      ELSE
+        j2 = jm
+      END IF
+    END DO
+    fp = (p - nlcs_q_p(j1)) / (nlcs_q_p(j2) - nlcs_q_p(j1))
+
+    y_lt = (1.0_num - fp) * q(j1,i) + fp * q(j2,i)
+    y_gt = (1.0_num - fp) * q(j1,i+1) + fp * q(j2,i+1)
+    chi = scale * 10.0_num**((1.0_num - fx) * y_lt + fx * y_gt)
+
+  END FUNCTION nlcs_quantile_chi
+
 
 
   ! Read the R1 and R2 columns of bessel_k.table
@@ -425,6 +584,9 @@ CONTAINS
     IF (ALLOCATED(asym_log_a)) DEALLOCATE(asym_log_a)
     IF (ALLOCATED(nlcs_cdf_up)) DEALLOCATE(nlcs_cdf_up)
     IF (ALLOCATED(nlcs_cdf_down)) DEALLOCATE(nlcs_cdf_down)
+    IF (ALLOCATED(nlcs_q_p)) DEALLOCATE(nlcs_q_p)
+    IF (ALLOCATED(nlcs_q_up)) DEALLOCATE(nlcs_q_up)
+    IF (ALLOCATED(nlcs_q_down)) DEALLOCATE(nlcs_q_down)
     IF (ALLOCATED(bessel_log_r1)) DEALLOCATE(bessel_log_r1)
     IF (ALLOCATED(bessel_log_r2)) DEALLOCATE(bessel_log_r2)
     IF (ALLOCATED(nbw_asym_log_a)) DEALLOCATE(nbw_asym_log_a)
