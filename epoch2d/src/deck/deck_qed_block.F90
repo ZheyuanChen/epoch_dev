@@ -60,6 +60,8 @@ CONTAINS
       spin_nbw = c_spin_process_resolved
       use_chi_dependent_moment = .TRUE.
       use_nlcs_quantile_tables = .TRUE.
+      photon_polarisation = .TRUE.
+      radiative_spin_flip = .TRUE.
 #endif
     END IF
 #endif
@@ -371,6 +373,19 @@ CONTAINS
       use_nlcs_quantile_tables = as_logical_print(value, element, errcode)
       RETURN
     END IF
+
+    ! Validation switches: every photon unpolarised (F), and no change
+    ! of the lepton spin at an NLCS emission (F)
+    IF (str_cmp(element, 'photon_polarisation') &
+        .OR. str_cmp(element, 'photon_polarization')) THEN
+      photon_polarisation = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'radiative_spin_flip')) THEN
+      radiative_spin_flip = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
 #endif
 
     errcode = c_err_unknown_element
@@ -440,14 +455,16 @@ CONTAINS
     ! The test switches act on the spin-resolved QED only
     IF (use_qed .AND. .NOT. use_spin_qed .AND. (.NOT. spin_no_transition &
         .OR. spin_nlcs /= c_spin_process_resolved &
-        .OR. spin_nbw /= c_spin_process_resolved)) THEN
+        .OR. spin_nbw /= c_spin_process_resolved &
+        .OR. .NOT. photon_polarisation .OR. .NOT. radiative_spin_flip)) THEN
       IF (rank == 0) THEN
         DO iu = 1, nio_units ! Print to stdout and to file
           io = io_units(iu)
           WRITE(io,*)
           WRITE(io,*) '*** ERROR ***'
-          WRITE(io,*) 'spin_no_transition, spin_nlcs and spin_nbw ', &
-              'need use_spin_qed=T.'
+          WRITE(io,*) 'spin_no_transition, spin_nlcs, spin_nbw, ', &
+              'photon_polarisation and radiative_spin_flip need ', &
+              'use_spin_qed=T.'
           WRITE(io,*) 'Code will terminate.'
         END DO
       END IF

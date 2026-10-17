@@ -702,6 +702,15 @@ MODULE shared_data
   ! CDFs ksi_sokolov_up/down.table on the grid of ksi_sokolov.table
   ! Note that legacy here refers to the older spin EPOCH/
   LOGICAL :: use_nlcs_quantile_tables = .TRUE.
+  ! Validation switches (qed block). photon_polarisation = F treats
+  ! every photon as unpolarised: NLCS photons get no Stokes vector, NBW
+  ! uses the unpolarised rate, and photons get no
+  ! survivor update. 
+  ! radiative_spin_flip = F leaves the lepton spin
+  ! unchanged at an NLCS emission (no radiative polarisation); the
+  ! spin-dependent rate and the survivor update still apply.
+  LOGICAL :: photon_polarisation = .TRUE.
+  LOGICAL :: radiative_spin_flip = .TRUE.
 #endif
 #endif
   LOGICAL :: use_qed = .FALSE.

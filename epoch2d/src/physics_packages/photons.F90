@@ -749,6 +749,9 @@ CONTAINS
           IF (use_spin_qed) THEN
             CALL photon_pol_frame(current%part_p, e_at_part, b_at_part, &
                 n_hat, e_hat, ax1, ax2, pol_valid)
+            ! photon_polarisation = F: unpolarised rate, split and pair
+            ! spins, and no survivor update
+            IF (.NOT. photon_polarisation) pol_valid = .FALSE.
             xi_obs = 0.0_num
             IF (pol_valid) xi_obs = pol_stored_to_obs(ax1, ax2, e_hat, &
                 current%spin)
@@ -1378,11 +1381,19 @@ CONTAINS
           photon_energy / (generating_gamma * m0 * c**2), eta, make_photon, &
           spin_avg, xi_stored)
     ELSE IF (spin_event) THEN
+      ! radiative_spin_flip = F: the final states are drawn as usual
+      ! The lepton retains its initial spin.
+      ! The photon's Stokes vector, conditional on the drawn final spin,
+      ! averages to the one summed over the final spin.
+      spin_avg = generating_electron%spin
       CALL nlcs_final_states(dir_x * u_mag, dir_y * u_mag, &
           dir_z * u_mag, generating_gamma, e_field, b_field, charge, &
           photon_energy / (generating_gamma * m0 * c**2), eta, make_photon, &
           generating_electron%spin, xi_stored)
+      IF (.NOT. radiative_spin_flip) generating_electron%spin = spin_avg
     END IF
+    ! photon_polarisation = F: every photon is unpolarised
+    IF (.NOT. photon_polarisation) xi_stored = 0.0_num
 #endif
 
     IF (make_photon) THEN
