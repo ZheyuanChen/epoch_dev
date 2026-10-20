@@ -20,7 +20,7 @@ MODULE particles
 #ifdef PREFETCH
   USE prefetch
 #endif
-
+  USE spin
   IMPLICIT NONE
 
 CONTAINS
@@ -142,7 +142,20 @@ CONTAINS
 #ifdef DELTAF_METHOD
     REAL(num) :: weight_back
 #endif
-
+#ifdef SPIN
+    REAL(num) :: part_sx, part_sy, part_sz
+    REAL(num) :: ux_avg, uy_avg, uz_avg
+    REAL(num) :: gamma_mid
+    REAL(num) :: u_avg_dot_B, spin_f1, spin_f2, spin_f3, spin_f4
+    REAL(num) :: spin_rotation_x, spin_rotation_y, spin_rotation_z
+    REAL(num) :: spin_primex, spin_primey, spin_primez
+    REAL(num) :: spin_a0, spin_a, chi2, erx, ery, erz, b_dot_e
+    LOGICAL   :: chi_moment
+    ! Holder of the three omega coefficients in T-BMT
+    REAL(num) :: omega_B, omega_v, omega_E
+#endif
+    ! Uniform external fields, scaled like the unnormalised gathers
+    REAL(num) :: ext_e(3), ext_b(3)
     TYPE(particle), POINTER :: current, next
     TYPE(particle_pointer_list), POINTER :: bnd_part_last, bnd_part_next
 
@@ -172,6 +185,9 @@ CONTAINS
     idtyz = idt * idy * idz * fac
     idtxz = idt * idx * idz * fac
     idtxy = idt * idx * idy * fac
+
+    ext_e = external_e / fac
+    ext_b = external_b / fac
 
     DO ispecies = 1, n_species
       current => species_list(ispecies)%attached_list%head
@@ -281,6 +297,15 @@ CONTAINS
       part_mc2 = c * part_mc
 #endif
 #endif
+      ! If qed is turned on, leptons should use chi_dependent
+        ! anomalous magentic dipole moment
+#ifdef SPIN
+      spin_a0 = species_list(ispecies)%anomalous_magnetic_moment
+      ! a(chi) only for the species QED acts on, and only with the table
+      chi_moment = amm_table_loaded .AND. use_tbmt .AND. &
+          (species_list(ispecies)%species_type == c_species_id_electron &
+          .OR. species_list(ispecies)%species_type == c_species_id_positron)
+#endif
       !DEC$ VECTOR ALWAYS
       DO ipart = 1, species_list(ispecies)%attached_list%count
         next => current%next
@@ -309,6 +334,7 @@ CONTAINS
         part_mc2 = c * part_mc
 #endif
 #endif
+
         ! Copy the particle properties out for speed
         part_x  = current%part_pos(1) - x_grid_min_local
         part_y  = current%part_pos(2) - y_grid_min_local
@@ -414,6 +440,14 @@ CONTAINS
 #include "triangle/e_part.inc"
 #include "triangle/b_part.inc"
 #endif
+        IF (use_external_fields) THEN
+          ex_part = ex_part + ext_e(1)
+          ey_part = ey_part + ext_e(2)
+          ez_part = ez_part + ext_e(3)
+          bx_part = bx_part + ext_b(1)
+          by_part = by_part + ext_b(2)
+          bz_part = bz_part + ext_b(3)
+        END IF
 
         ! update particle momenta using weighted fields
         uxm = part_ux + cmratio * ex_part
@@ -436,6 +470,11 @@ CONTAINS
 #else
         ! Half timestep, then use Boris1970 rotation, see Birdsall and Langdon
         gamma_rel = SQRT(uxm**2 + uym**2 + uzm**2 + 1.0_num)
+#endif
+#ifdef SPIN
+        ! Time-centred gamma used by the rotation (Boris or HC); kept for
+        ! the T-BMT step, since gamma_rel is overwritten with gamma^{n+1}
+        gamma_mid = gamma_rel
 #endif
         root = ccmratio / gamma_rel
 
@@ -477,6 +516,134 @@ CONTAINS
         part_x = part_x + delta_x
         part_y = part_y + delta_y
         part_z = part_z + delta_z
+
+        ! Now update spin according to T-BMT: ds/dt=-omega x s
+        ! Also prob add a guard to detect those species that have
+        ! anomalous magnetic moment defined.
+#ifdef SPIN
+        ! Overall logic:(1) compute omega using velocities at half-
+        ! time step. (2) update spin using a Boris-like rotation
+        part_sx = current%spin(1)
+        part_sy = current%spin(2)
+        part_sz = current%spin(3)
+
+        ! beta at n+1/2: the velocity used by the rotation above,
+        ! (u- + u+) / (2 gamma_mid), for both Boris and HC
+        ux_avg = 0.5_num * (uxm + uxp) / gamma_mid
+        uy_avg = 0.5_num * (uym + uyp) / gamma_mid
+        uz_avg = 0.5_num * (uzm + uzp) / gamma_mid
+
+        ! If use chi-dependent anomalous mag dipole moment, calculate
+        ! chi usuing velocities at half time step and then use the lookup
+        ! table to determine the anomalous moment.
+        IF (chi_moment) THEN
+          ! chi^2 = (gamma/E_s)^2 [(E + c beta x B)^2 - (beta.E)^2] at
+          ! n+1/2; field sums are unnormalised, hence fac
+          erx = ex_part + c * (uy_avg * bz_part - uz_avg * by_part)
+          ery = ey_part + c * (uz_avg * bx_part - ux_avg * bz_part)
+          erz = ez_part + c * (ux_avg * by_part - uy_avg * bx_part)
+          b_dot_e = ux_avg * ex_part + uy_avg * ey_part + uz_avg * ez_part
+          chi2 = (gamma_mid * fac / e_s)**2 &
+              * (erx**2 + ery**2 + erz**2 - b_dot_e**2)
+          spin_a = spin_a0 * anomalous_moment_factor(chi2)
+        ELSE
+          spin_a = spin_a0
+        END IF
+
+        ! Arc midpoint method -- inconsistent with HC and also more
+        ! expensive. Kept here for reference
+
+        ! Compute the half-time-step-tau vector by reusing old tau:
+        !tau_half_x = taux / (1.0_num + SQRT(1 + taux2 + tauy2 + tauz2) )
+        !tau_half_y = tauy / (1.0_num + SQRT(1 + taux2 + tauy2 + tauz2) )
+        !tau_half_z = tauz / (1.0_num + SQRT(1 + taux2 + tauy2 + tauz2) )
+
+        !taux2 = tau_half_x**2
+        !tauy2 = tau_half_y**2
+        !tauz2 = tau_half_z**2
+
+        !tau = 1.0_num / (1.0_num + taux2 + tauy2 + tauz2)
+
+        ! the normalised velocity u = v/c at the half time step
+        ! note that gamma_mid is the gamma at half-time step, preserved from earlier
+        !ux_avg = (((1.0_num + taux2 - tauy2 - tauz2) * uxm &
+        !    + 2.0_num * ((tau_half_x * tau_half_y + tau_half_z) * uym &
+        !    + (tau_half_x * tau_half_z - tau_half_y) * uzm)) * tau) / gamma_mid
+        !uy_avg = (((1.0_num - taux2 + tauy2 - tauz2) * uym &
+        !    + 2.0_num * ((tau_half_y * tau_half_z + tau_half_x) * uzm &
+        !    + (tau_half_y * tau_half_x - tau_half_z) * uxm)) * tau) / gamma_mid
+        !uz_avg = (((1.0_num - taux2 - tauy2 + tauz2) * uzm &
+        !    + 2.0_num * ((tau_half_z * tau_half_x + tau_half_y) * uxm &
+        !    + (tau_half_z * tau_half_y - tau_half_x) * uym)) * tau) / gamma_mid
+
+        ! T-BMT precession (control block use_tbmt; off for tests)
+        IF (use_tbmt) THEN
+          ! The three omega coefficients in Qian (2.46)
+          omega_B = spin_a + 1.0_num / gamma_mid
+          omega_v = spin_a * gamma_mid &
+              / (1.0_num + gamma_mid)
+          omega_E = spin_a + 1.0_num / (1.0_num &
+              + gamma_mid)
+
+          ! Multiply by q/mc
+          spin_f1 = part_q * omega_B / part_m
+          spin_f2 = part_q * omega_v / part_m
+          spin_f3 = part_q * omega_E / part_mc
+
+          ! ds/dt = - spin_rotation(aka omega) x s
+          ! spin_rotation = spin_f1*B - spin_f2*beta*B beta
+              !       - spin_f3*beta x E
+              ! where beta = v/c = u
+
+          ! compute u dot B
+          u_avg_dot_B = ux_avg * bx_part + uy_avg * by_part + uz_avg * bz_part
+
+          ! As every term involves one field multiplication, a multiplicative
+          ! factor "fac" is used to take care of particle shapes
+          ! A prefactor of dt fac /2 is multiplied to the actual omega in the
+          ! equation.
+          !See later: spin_rotation is actually the "t_omega" vector
+          spin_rotation_x = dtfac * ((spin_f1 * bx_part) &
+              - spin_f2 * u_avg_dot_B * ux_avg &
+              - spin_f3 * (uy_avg * ez_part - uz_avg * ey_part))
+          spin_rotation_y = dtfac * ((spin_f1 * by_part) &
+              - spin_f2 * u_avg_dot_B * uy_avg &
+              - spin_f3 * (uz_avg * ex_part - ux_avg * ez_part))
+          spin_rotation_z = dtfac * ((spin_f1 * bz_part) &
+              - spin_f2 * u_avg_dot_B * uz_avg &
+              - spin_f3 * (ux_avg * ey_part - uy_avg * ex_part))
+
+          ! now perform a Boris-style rotation on the spin vector
+          ! For calculation see my notes
+          ! Define vector t_omega = dt/2 * spin_rotation
+          ! S_updated = S_old + 2/(1+t_omega^2) S' cross t_omega
+          ! where S' = S_old + S_old cross t_omega
+          ! Note that spin_rotation in the code  is actually t_omega
+          spin_f4 = 2.0_num / (1.0_num + spin_rotation_x*spin_rotation_x &
+              + spin_rotation_y * spin_rotation_y &
+              + spin_rotation_z * spin_rotation_z)
+
+          spin_primex = part_sx + part_sy * spin_rotation_z &
+              - part_sz * spin_rotation_y
+
+          spin_primey = part_sy + part_sz * spin_rotation_x &
+              - part_sx * spin_rotation_z
+
+          spin_primez = part_sz + part_sx * spin_rotation_y &
+              - part_sy * spin_rotation_x
+
+          current%spin(1) = part_sx + spin_f4 * (spin_primey * spin_rotation_z &
+              - spin_primez * spin_rotation_y)
+
+          current%spin(2) = part_sy + spin_f4 * (spin_primez * spin_rotation_x &
+              - spin_primex * spin_rotation_z)
+
+          current%spin(3) = part_sz + spin_f4 * (spin_primex * spin_rotation_y &
+              - spin_primey * spin_rotation_x)
+        END IF
+#endif
+
+
 
         ! particle has now finished move to end of timestep, so copy back
         ! into particle array

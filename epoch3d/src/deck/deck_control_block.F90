@@ -47,6 +47,9 @@ CONTAINS
     print_eta_string = .TRUE.
     use_current_correction = .FALSE.
     use_particle_count_update = .FALSE.
+#ifdef SPIN
+    use_tbmt = .TRUE.
+#endif
     use_accurate_n_zeros = .FALSE.
     reset_walltime = .FALSE.
     balance_first = .TRUE.
@@ -516,6 +519,12 @@ CONTAINS
     ELSE IF (str_cmp(element, 'deck_warnings_fatal')) THEN
       all_deck_errcodes_fatal = as_logical_print(value, element, errcode)
 
+#ifdef SPIN
+    ! T-BMT spin precession; switch off to test the QED spin alone
+    ELSE IF (str_cmp(element, 'use_tbmt')) THEN
+      use_tbmt = as_logical_print(value, element, errcode)
+
+#endif
     ELSE
       errcode = c_err_unknown_element
 

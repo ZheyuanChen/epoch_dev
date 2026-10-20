@@ -298,6 +298,10 @@ CONTAINS
 #else
     defines = IOR(defines, c_def_use_mpi3)
 #endif
+#ifdef SPIN
+    defines = IOR(defines, c_def_spin)
+    WRITE(*,*) 'Spin and polarisation -DSPIN'
+#endif
     WRITE(*,*) '*************************************************************'
 
   END SUBROUTINE compiler_directives

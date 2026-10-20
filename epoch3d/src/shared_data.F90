@@ -149,6 +149,10 @@ MODULE shared_data
     REAL(num) :: rate_rr
     REAL(num) :: rate_3br
 #endif
+#ifdef SPIN
+    REAL(num), DIMENSION(3) :: spin
+#endif
+
   END TYPE particle
 
   ! Data for migration between species
@@ -299,6 +303,12 @@ MODULE shared_data
 
     ! Per-species boundary conditions
     INTEGER, DIMENSION(2*c_ndims) :: bc_particle
+
+#ifdef SPIN
+    INTEGER :: spin_distribution
+    REAL(num), DIMENSION(3) :: spin_orientation
+    REAL(num) :: anomalous_magnetic_moment
+#endif
   END TYPE particle_species
 
   REAL(num), ALLOCATABLE, TARGET :: global_species_density(:,:,:)
@@ -665,6 +675,14 @@ MODULE shared_data
   CHARACTER(LEN=string_length) :: qed_table_location
   LOGICAL :: use_continuous_emission = .FALSE., use_classical_emission=.FALSE.
   REAL(num) :: photon_sample_fraction = 1.0_num
+  ! use_emission_subsetps:
+  ! Discrete emission followed event by event within a step (qed block
+  ! use_emission_substeps): several emissions per step, and the spin
+  ! survivor update split at each emission. F: EPOCH's legacy step (at
+  ! most one emission, the optical-depth overshoot discarded).
+  ! This is independent of the use of spin, but it is highly recommended
+  ! with spin+qed.
+  LOGICAL :: use_emission_substeps = .TRUE.
   LOGICAL :: use_LBW = .FALSE.
   LOGICAL :: use_LBW_diff = .TRUE.
   REAL(num) :: LBW_amp_factor = 1.0_num
@@ -672,7 +690,67 @@ MODULE shared_data
   INTEGER :: lbw_positron_species = -1
   REAL(num), PARAMETER :: tolerance_cdf       = 1.0e-6_num
   REAL(num), PARAMETER :: tolerance_cos_angle = 1.0e-6_num
+#ifdef SPIN
+  ! Spin-dependent QED (qed block). use_spin_qed makes the NLCS rate
+  ! depend on the lepton spin; spin_second_order_depth uses the exact
+  ! two-state survival probability in the optical-depth decrement.
+  ! spin_final_states: c_spin_final_collapse or c_spin_final_mean.
+  ! The collapse and mean final state sampling methods are described
+  ! in more details in the user maunel.
+  LOGICAL :: use_spin_qed = .FALSE., spin_second_order_depth = .FALSE.
+  INTEGER :: spin_final_states = c_spin_final_collapse
+  ! pair_tables: c_pair_tables_legacy or c_pair_tables_lcfa (resolved
+  ! from c_pair_tables_unset when the qed block is finalised)
+  ! This refers to Erber (1961) eqn (3.3d) vs (3.3b). The former, used
+  ! by EPOCH previously, is an analytical approximation of the latter.
+  ! There is no reason not to use the latter now that it's available.
+  ! This switch is left for back-compatibility.
+  INTEGER :: pair_tables = c_pair_tables_unset
+  ! Switches for tests (qed block): spin_no_transition applies the
+  ! survivor (non-transition) updates--when it's T, the spin(pol)
+  ! will be updated when there is no NLCS(NBW) event happening.
+  ! spin_nlcs and spin_nbw are
+  ! c_spin_process_resolved, _unpolarised or _off
+  LOGICAL :: spin_no_transition = .TRUE.
+  INTEGER :: spin_nlcs = c_spin_process_resolved
+  INTEGER :: spin_nbw = c_spin_process_resolved
+  ! Leptons use the chi-dependent anomalous moment a(chi) in T-BMT
+  ! when use_qed = T (qed block use_chi_dependent_moment; F keeps the
+  ! species' constant moment, for comparison with constant-a theory)
+  LOGICAL :: use_chi_dependent_moment = .TRUE.
+  ! Photon energies of spin-resolved NLCS events from the quantile
+  ! tables nlcs_quantile_up/down.table (qed block
+  ! use_nlcs_quantile_tables, default) or, with F, from the legacy
+  ! CDFs ksi_sokolov_up/down.table on the grid of ksi_sokolov.table
+  ! Note that legacy here refers to the older spin EPOCH/
+  LOGICAL :: use_nlcs_quantile_tables = .TRUE.
+  ! Validation switches (qed block). photon_polarisation = F treats
+  ! every photon as unpolarised: NLCS photons get no Stokes vector, NBW
+  ! uses the unpolarised rate, and photons get no
+  ! survivor update. 
+  ! radiative_spin_flip = F leaves the lepton spin
+  ! unchanged at an NLCS emission (no radiative polarisation); the
+  ! spin-dependent rate and the survivor update still apply.
+  LOGICAL :: photon_polarisation = .TRUE.
+  LOGICAL :: radiative_spin_flip = .TRUE.
 #endif
+#endif
+#ifdef SPIN
+  ! T-BMT spin precession in the particle push (control block)
+  ! Note that qed is not required for this (although the chi-dependent)
+  ! anomalous magnetic dipole moment, when qed is activated, affects
+  ! the T-BMT.
+  LOGICAL :: use_tbmt = .TRUE.
+#endif
+  ! Spatially uniform external fields, functions of time only (fields
+  ! block ex_external, ..., bz_external; for tests). They are added to
+  ! the fields that particles see in the push and in QED, but not to
+  ! the grid, so they are not evolved, output or seen by the solver.
+  ! Order: ex, ey, ez, bx, by, bz; values refreshed once per step.
+  LOGICAL :: use_external_fields = .FALSE.
+  LOGICAL :: external_field_set(6) = .FALSE.
+  TYPE(primitive_stack), SAVE :: external_field_function(6)
+  REAL(num) :: external_e(3) = 0.0_num, external_b(3) = 0.0_num
   LOGICAL :: use_binary_collisions = .FALSE.
   LOGICAL :: use_qed = .FALSE.
 #ifdef BREMSSTRAHLUNG

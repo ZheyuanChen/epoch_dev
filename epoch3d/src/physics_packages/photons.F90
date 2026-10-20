@@ -19,7 +19,7 @@ MODULE photons
   USE collisions
   USE partlist
   USE utilities
-
+  USE spin
   IMPLICIT NONE
 
   REAL(num), PRIVATE :: sig2cdt_dV_lbw
@@ -252,6 +252,12 @@ CONTAINS
         READ(lu,*) log_tpair(ichi,1), log_omegahat(ichi,2), log_tpair(ichi,2)
       END DO
       CLOSE(unit=lu)
+#ifdef SPIN
+      ! pair_tables = lcfa: the exact LCFA T(chi) in place of Erber's
+      ! approximation (the trident column is kept)
+      IF (pair_tables == c_pair_tables_lcfa) &
+          CALL read_pairprod_lcfa(n_sample_t, log_tpair(:,1), log_tpair(:,2))
+#endif
 
       OPEN(unit=lu, file=TRIM(qed_table_location)//'/ksi_sokolov.table', &
           status='OLD')
@@ -456,7 +462,19 @@ CONTAINS
 
       DEALLOCATE(realbuf)
     END IF
-
+#ifdef SPIN
+    ! Table for a(chi); without it leptons keep their constant moment
+    IF (use_chi_dependent_moment) CALL setup_anomalous_moment_table
+    ! Spin asymmetry A(eta) of the NLCS rate
+    IF (use_spin_qed) CALL setup_nlcs_asymmetry_table
+    ! K_1/3/K_2/3 and IntK_1/3/K_2/3
+    IF (use_spin_qed) CALL setup_bessel_k_table
+    ! Polarisation asymmetry A(chi) and energy split of NBW
+    IF (use_spin_qed .OR. pair_tables == c_pair_tables_lcfa) THEN
+      CALL setup_nbw_asymmetry_table
+      CALL setup_nbw_split_tables
+    END IF
+#endif
     log_omegahat(:,1) = log_tpair(:,1)
 
     ALLOCATE(log_eta(n_sample_eta))
@@ -475,6 +493,18 @@ CONTAINS
 
     DEALLOCATE(chimin_table)
 
+#ifdef SPIN
+    ! Spin-resolved photon energies: quantile tables, or the legacy CDFs
+    ! on the grid just built
+    IF (use_spin_qed) THEN
+      IF (use_nlcs_quantile_tables) THEN
+        CALL setup_nlcs_quantile_tables
+      ELSE
+        CALL setup_nlcs_spin_cdf_tables
+      END IF
+    END IF
+#endif
+
   END SUBROUTINE setup_tables_qed
 
 
@@ -490,6 +520,9 @@ CONTAINS
     DEALLOCATE(p_photon_energy)
     DEALLOCATE(log_tpair)
     DEALLOCATE(log_omegahat)
+#ifdef SPIN
+    CALL deallocate_spin_tables
+#endif
 
   END SUBROUTINE deallocate_tables_qed
 
@@ -530,7 +563,7 @@ CONTAINS
   END FUNCTION reset_optical_depth
 
 
-
+  ! A 14/10/26 update enables sub-timestep sampling
   SUBROUTINE qed_update_optical_depth
 
     ! Updates the optical depth for electrons and photons
@@ -541,6 +574,19 @@ CONTAINS
     REAL(num) :: part_ux, part_uy, part_uz
     REAL(num) :: dir_x, dir_y, dir_z
     REAL(num) :: eta, chi_val, part_e, gamma_rel, norm
+    REAL(num) :: dtau
+    LOGICAL :: legacy_step
+#ifdef SPIN
+    REAL(num) :: dtau_avg, f_event, f_rest
+    REAL(num) :: e_at_part(3), b_at_part(3), zeta, n_hat(3)
+    REAL(num) :: a_spin, x_spin
+    REAL(num) :: e_hat(3), ax1(3), ax2(3), xi_obs(3)
+    LOGICAL :: spin_valid, pol_valid
+#endif
+
+    ! Emission handled here, one event at most per step (legacy), or
+    ! inside lepton_emission_substeps
+    legacy_step = use_continuous_emission .OR. .NOT. use_emission_substeps
 
     DO ispecies = 1, n_species
 
@@ -559,15 +605,54 @@ CONTAINS
           part_uz = current%part_p(3) / mc0
           gamma_rel = SQRT(part_ux**2 + part_uy**2 + part_uz**2 + 1.0_num)
 
+#ifdef SPIN
+          eta = calculate_eta(part_x, part_y, part_z, part_ux, part_uy, &
+              part_uz, gamma_rel, e_at_part, b_at_part)
+#else
           eta = calculate_eta(part_x, part_y, part_z, part_ux, part_uy, &
               part_uz, gamma_rel)
+#endif
 
           ! If using continuous emission emit a photon macroparticle at every timestep
           IF (use_continuous_emission) THEN
             CALL generate_photon(current, photon_species, eta)
+          ELSE IF (use_emission_substeps) THEN
+            ! The whole step, event by event (emissions and spin)
+#ifdef SPIN
+            CALL lepton_emission_substeps(current, ispecies, part_x, &
+                part_y, part_z, eta, gamma_rel, e_at_part, b_at_part)
+#else
+            CALL lepton_emission_substeps(current, part_x, part_y, part_z, &
+                eta, gamma_rel)
+#endif
           ELSE
-            current%optical_depth = &
-              current%optical_depth - delta_optical_depth(eta, gamma_rel)
+            ! Legacy step: decrement here, at most one emission below
+            ! Maybe a better logic is needed here to avoid double-setting
+            ! dtaut
+            dtau = delta_optical_depth(eta, gamma_rel)
+#ifdef SPIN
+            ! If spin is used with full-sampling (legacy) method
+            ! the only change here is to use spin-dependent rather than
+            ! independent NLCS rate.
+            ! Spin-dependent rate W_bar (1 + A zeta), zeta = qs s.beta_hat
+            IF (use_spin_qed) THEN
+              CALL lepton_spin_projection(part_ux, part_uy, part_uz, &
+                  gamma_rel, e_at_part, b_at_part, current%spin, &
+                  species_list(ispecies)%charge, zeta, n_hat, spin_valid)
+              a_spin = nlcs_asymmetry(eta)
+              x_spin = a_spin * dtau
+              ! spin_nlcs (tests): unpolarised and photon_only keep
+              ! W_bar, off emits nothing; the survivor update keeps
+              ! x_spin either way (photon_only skips it)
+              IF (spin_nlcs == c_spin_process_resolved) THEN
+                dtau = spin_delta_optical_depth(dtau, a_spin, zeta, &
+                    spin_second_order_depth)
+              ELSE IF (spin_nlcs == c_spin_process_off) THEN
+                dtau = 0.0_num
+              END IF
+            END IF
+#endif
+            current%optical_depth = current%optical_depth - dtau
           ENDIF
 
 #ifdef TRIDENT_PHOTONS
@@ -584,11 +669,41 @@ CONTAINS
                 - delta_optical_depth_tri(eta, gamma_rel)
           END IF
 #endif
-          ! If optical depth dropped below zero generate photon...
-          IF (current%optical_depth < 0.0_num) THEN
-            CALL generate_photon(current, photon_species, eta)
-            ! ... and reset optical depth
-            current%optical_depth = reset_optical_depth()
+          ! Legacy step only (use_emission_substeps = F): if the
+          ! optical depth dropped below zero generate photon...
+          IF (legacy_step) THEN
+            IF (current%optical_depth < 0.0_num) THEN
+#ifdef SPIN 
+              ! A few flags for testing purposes.
+              IF (use_spin_qed .AND. spin_nlcs == c_spin_process_resolved) &
+                  THEN
+                CALL generate_photon(current, photon_species, eta, zeta, &
+                    a_spin, e_at_part, b_at_part, &
+                    species_list(ispecies)%charge)
+              ELSE IF (use_spin_qed &
+                  .AND. spin_nlcs == c_spin_process_photon_only) THEN
+                ! Spin-averaged spectrum (zeta = 0); generate_photon
+                ! leaves the lepton spin unchanged in this mode
+                CALL generate_photon(current, photon_species, eta, &
+                    0.0_num, a_spin, e_at_part, b_at_part, &
+                    species_list(ispecies)%charge)
+              ELSE
+                CALL generate_photon(current, photon_species, eta)
+              END IF
+#else
+              CALL generate_photon(current, photon_species, eta)
+#endif
+              ! ... and reset optical depth
+              current%optical_depth = reset_optical_depth()
+#ifdef SPIN
+            ELSE IF (use_spin_qed .AND. spin_no_transition &
+                .AND. spin_nlcs /= c_spin_process_photon_only &
+                .AND. .NOT. use_continuous_emission) THEN
+              ! No emission this step: survivor (non-transition) spin
+              IF (spin_valid) CALL lepton_no_emission_update(current%spin, &
+                  n_hat, x_spin)
+#endif
+            END IF
           END IF
 
 #ifdef TRIDENT_PHOTONS
@@ -618,15 +733,92 @@ CONTAINS
           dir_y = current%part_p(2) * norm
           dir_z = current%part_p(3) * norm
           part_e  = current%particle_energy / m0 / c**2
+#ifdef SPIN
+          ! calculate_chi also returns the fields at the photon, which
+          ! the polarisation-resolved NBW needs
+          chi_val = calculate_chi(part_x, part_y, part_z, dir_x, dir_y, &
+              dir_z, part_e, e_at_part, b_at_part)
+#else
           chi_val = calculate_chi(part_x, part_y, part_z, dir_x, dir_y, &
               dir_z, part_e)
-
-          current%optical_depth = current%optical_depth &
-              - delta_optical_depth_photon(chi_val, part_e)
+#endif
+          ! Reuse the variable dtau to update photon optical depth
+          dtau = delta_optical_depth_photon(chi_val, part_e)
+#ifdef SPIN
+          ! Polarisation-dependent rate W_bar (1 - A xi1_obs)
+          IF (use_spin_qed) THEN
+            CALL photon_pol_frame(current%part_p, e_at_part, b_at_part, &
+                n_hat, e_hat, ax1, ax2, pol_valid)
+            ! photon_polarisation = F: unpolarised rate, split and pair
+            ! spins, and no survivor update
+            IF (.NOT. photon_polarisation) pol_valid = .FALSE.
+            xi_obs = 0.0_num
+            IF (pol_valid) xi_obs = pol_stored_to_obs(ax1, ax2, e_hat, &
+                current%spin)
+            a_spin = nbw_asymmetry(chi_val)
+            ! The survivor update uses the physical (unboosted) decrement
+            x_spin = a_spin * dtau / boost_pairs
+            dtau_avg = dtau
+            ! spin_nbw (tests): unpolarised keeps W_bar, off decays
+            ! nothing; the survivor update keeps x_spin either way
+            IF (spin_nbw == c_spin_process_resolved) THEN
+              dtau = spin_delta_optical_depth(dtau, a_spin, -xi_obs(1), &
+                  spin_second_order_depth)
+            ELSE IF (spin_nbw == c_spin_process_off) THEN
+              dtau = 0.0_num
+            END IF
+          END IF
+#endif
+          current%optical_depth = current%optical_depth - dtau
           ! If optical depth dropped below zero generate pair...
+          ! (the photon is removed from its own species, ispecies, which
+          ! need not be the QED photon species)
+
+          ! Need to think about boost_pairs
           IF (current%optical_depth < 0.0_num) THEN
-            CALL generate_pair(current, chi_val, photon_species, &
+#ifdef SPIN
+            ! use_emission_substeps: the photon is a survivor until it
+            ! decays, at the fraction f of the step
+            f_rest = 0.0_num
+            IF (use_spin_qed .AND. use_emission_substeps &
+                .AND. spin_no_transition .AND. pol_valid) THEN
+              f_event = 1.0_num + current%optical_depth / dtau
+              IF (spin_nbw == c_spin_process_resolved &
+                  .AND. spin_second_order_depth) &
+                  f_event = spin_event_fraction(current%optical_depth &
+                  + dtau, dtau_avg, a_spin, -xi_obs(1))
+              xi_obs = photon_no_decay_update(xi_obs, TANH(f_event * x_spin))
+              current%spin = pol_obs_to_stored(ax1, ax2, e_hat, xi_obs)
+              f_rest = 1.0_num - f_event
+            END IF
+            IF (use_spin_qed .AND. spin_nbw == c_spin_process_resolved) THEN
+              CALL generate_pair(current, chi_val, ispecies, &
+                  breit_wheeler_electron_species, &
+                  breit_wheeler_positron_species, xi_obs, a_spin, &
+                  e_at_part, b_at_part)
+            ELSE
+              CALL generate_pair(current, chi_val, ispecies, &
+                  breit_wheeler_electron_species, &
+                  breit_wheeler_positron_species)
+            END IF
+            ! A photon kept by boost_pairs survives the rest of the step
+            ! Need to decide whether the polarisation needs to be updated
+            ! As a result of partial decay.
+            IF (ASSOCIATED(current) .AND. f_rest > 0.0_num) &
+                current%spin = pol_obs_to_stored(ax1, ax2, e_hat, &
+                photon_no_decay_update(xi_obs, TANH(f_rest * x_spin)))
+#else
+            CALL generate_pair(current, chi_val, ispecies, &
                 breit_wheeler_electron_species, breit_wheeler_positron_species)
+#endif
+#ifdef SPIN
+          ELSE IF (use_spin_qed .AND. spin_no_transition .AND. pol_valid) &
+              THEN
+            ! No decay this step: survivor (non-transition) polarisation,
+            ! dichroism only (no birefringence table yet)
+            current%spin = pol_obs_to_stored(ax1, ax2, e_hat, &
+                photon_no_decay_update(xi_obs, TANH(x_spin)))
+#endif
           END IF
           current => next_pt
         END DO
@@ -637,9 +829,160 @@ CONTAINS
 
 
 
+#ifdef SPIN
+  SUBROUTINE lepton_emission_substeps(current, ispecies, part_x, part_y, &
+      part_z, eta_start, gamma_start, e_at_part, b_at_part)
+#else
+  SUBROUTINE lepton_emission_substeps(current, part_x, part_y, part_z, &
+      eta_start, gamma_start)
+#endif
+
+    ! This is a substantial change to both spin and QED (NLCS).
+    ! The crucial problem is that EPOCH previously emits only at full 
+    ! time steps where the optical depth is updated and checked against
+    ! 0. However, the quantum non-transition event is (previously) either
+    ! a yes or no. For the case where an emission happens, there's no quantum
+    ! non-transition update, even if the optical depth drops to 0 (in theory)
+    ! at, say, 0.1*time_step. This introduces noticeable but not-so-significant
+    ! errors. Also, this error depends on the resolution of time-steps--a
+    ! shorter timestep introduces smaller error. 
+
+    ! Nevertheless, we can fix this probelm quite easily.
+
+    ! Discrete photon emission (NLCS) of one lepton over one step, with
+    ! the fields at the lepton frozen for the step (qed block
+    ! use_emission_substeps = T, the default). The step is followed
+    ! event by event. If the optical depth runs out at a fraction f of
+    ! the remaining step, the spin first gets the survivor
+    ! (non-transition) update for that fraction, the photon is then
+    ! emitted with the spin of that moment, a new optical depth is
+    ! drawn, and the rest of the step, 1 - f, is treated the same way.
+    ! A lepton can therefore emit more than once per step. The legacy
+    ! step (one emission at most, the overshoot discarded, no survivor
+    ! update in an emission step) emits at W (1 - W dt / 2) instead of
+    ! W, and applies the survivor update at a rate W (1 - W dt).
+    ! f = tau / dtau for the first-order decrement; with
+    ! spin_second_order_depth the decrement is not linear in time and f
+    ! comes from spin_event_fraction. After a recoil, eta and gamma are
+    ! recomputed from the new momentum in the same fields.
+    TYPE(particle), POINTER :: current
+#ifdef SPIN
+    INTEGER, INTENT(IN) :: ispecies
+#endif
+    REAL(num), INTENT(IN) :: part_x, part_y, part_z, eta_start, gamma_start
+#ifdef SPIN
+    REAL(num), INTENT(IN) :: e_at_part(3), b_at_part(3)
+#endif
+    ! Safety net: more events than this in one step means a time
+    ! step far too large for the emission rate
+    INTEGER, PARAMETER :: max_events = 10000
+    INTEGER :: n_event
+    REAL(num) :: eta, gamma_rel, frac, dtau0, dtau, f
+    REAL(num) :: part_ux, part_uy, part_uz
+#ifdef SPIN
+    REAL(num) :: zeta, n_hat(3), a_spin, x_spin, charge
+    LOGICAL :: spin_valid, survivor, resolved
+#endif
+
+    eta = eta_start
+    gamma_rel = gamma_start
+    frac = 1.0_num
+#ifdef SPIN
+    charge = species_list(ispecies)%charge
+    resolved = use_spin_qed .AND. spin_nlcs == c_spin_process_resolved
+    survivor = use_spin_qed .AND. spin_no_transition &
+        .AND. spin_nlcs /= c_spin_process_photon_only
+    zeta = 0.0_num
+    x_spin = 0.0_num
+    a_spin = 0.0_num
+    spin_valid = .FALSE.
+#endif
+
+    DO n_event = 1, max_events
+      ! Decrement over the remaining fraction of the step
+      dtau0 = frac * delta_optical_depth(eta, gamma_rel)
+      dtau = dtau0
+#ifdef SPIN
+      ! Spin-dependent rate W_bar (1 + A zeta), zeta = qs s.beta_hat;
+      ! spin_nlcs (tests): unpolarised and photon_only keep W_bar; off
+      ! emits nothing; the survivor update keeps x_spin either way
+      IF (use_spin_qed) THEN
+        part_ux = current%part_p(1) / mc0
+        part_uy = current%part_p(2) / mc0
+        part_uz = current%part_p(3) / mc0
+        CALL lepton_spin_projection(part_ux, part_uy, part_uz, &
+            gamma_rel, e_at_part, b_at_part, current%spin, charge, zeta, &
+            n_hat, spin_valid)
+        a_spin = nlcs_asymmetry(eta)
+        x_spin = a_spin * dtau0
+        IF (resolved) THEN
+          dtau = spin_delta_optical_depth(dtau0, a_spin, zeta, &
+              spin_second_order_depth)
+        ELSE IF (spin_nlcs == c_spin_process_off) THEN
+          dtau = 0.0_num
+        END IF
+      END IF
+#endif
+
+      ! No (further) emission in this step
+      IF (current%optical_depth >= dtau) THEN
+        current%optical_depth = current%optical_depth - dtau
+#ifdef SPIN
+        IF (survivor .AND. spin_valid) &
+            CALL lepton_no_emission_update(current%spin, n_hat, x_spin)
+#endif
+        RETURN
+      END IF
+
+      ! An emission at the fraction f of the remaining step
+      f = current%optical_depth / dtau
+#ifdef SPIN
+      IF (resolved .AND. spin_second_order_depth) &
+          f = spin_event_fraction(current%optical_depth, dtau0, a_spin, &
+          zeta)
+      ! The spin evolves as a survivor's until the emission
+      IF (survivor .AND. spin_valid) THEN
+        CALL lepton_no_emission_update(current%spin, n_hat, f * x_spin)
+        zeta = DOT_PRODUCT(current%spin, n_hat)
+      END IF
+      IF (resolved) THEN
+        CALL generate_photon(current, photon_species, eta, zeta, a_spin, &
+            e_at_part, b_at_part, charge)
+      ELSE IF (use_spin_qed &
+          .AND. spin_nlcs == c_spin_process_photon_only) THEN
+        ! Spin-averaged spectrum (zeta = 0); generate_photon leaves the
+        ! lepton spin unchanged in this mode
+        CALL generate_photon(current, photon_species, eta, 0.0_num, &
+            a_spin, e_at_part, b_at_part, charge)
+      ELSE
+        CALL generate_photon(current, photon_species, eta)
+      END IF
+#else
+      CALL generate_photon(current, photon_species, eta)
+#endif
+      current%optical_depth = reset_optical_depth()
+
+      ! The rest of the step, with the recoiled momentum
+      frac = frac * (1.0_num - f)
+      IF (frac <= 0.0_num) RETURN
+      IF (use_radiation_reaction) THEN
+        part_ux = current%part_p(1) / mc0
+        part_uy = current%part_p(2) / mc0
+        part_uz = current%part_p(3) / mc0
+        gamma_rel = SQRT(part_ux**2 + part_uy**2 + part_uz**2 + 1.0_num)
+        eta = calculate_eta(part_x, part_y, part_z, part_ux, part_uy, &
+            part_uz, gamma_rel)
+      END IF
+    END DO
+
+  END SUBROUTINE lepton_emission_substeps
+
+
+
   FUNCTION delta_optical_depth(eta, gamma_rel)
 
     ! Function that calcualtes the change to the optical depth
+    ! c.f. Ridgers et al 2014 eqn (2)
     REAL(num) :: delta_optical_depth
     REAL(num), INTENT(IN) :: eta, gamma_rel
     REAL(num) :: hsokolov
@@ -689,7 +1032,7 @@ CONTAINS
 
 
   FUNCTION calculate_eta(part_x, part_y, part_z, part_ux, part_uy, part_uz, &
-      gamma_rel)
+      gamma_rel, e_out, b_out)
 
     REAL(num) :: calculate_eta
     REAL(num), INTENT(IN) :: part_x, part_y, part_z
@@ -698,6 +1041,8 @@ CONTAINS
     REAL(num) :: beta_x, beta_y, beta_z
     REAL(num) :: flperp(3), i_e, tau0, roland_eta
     REAL(num) :: lambdac, coeff_eta, moduclip, moduclip2, u_dot_e
+    ! To be used by the spin routine
+    REAL(num), INTENT(OUT), OPTIONAL :: e_out(3), b_out(3)    
 
     CALL field_at_particle(part_x, part_y, part_z, e_at_part, b_at_part)
 
@@ -737,17 +1082,23 @@ CONTAINS
     ! Determine eta from fields
     calculate_eta = roland_eta
 
+    ! Used by the spin routine
+    IF (PRESENT(e_out)) e_out = e_at_part
+    IF (PRESENT(b_out)) b_out = b_at_part
   END FUNCTION calculate_eta
 
 
 
-  FUNCTION calculate_chi(part_x, part_y, part_z, dir_x, dir_y, dir_z, part_e)
+  FUNCTION calculate_chi(part_x, part_y, part_z, dir_x, dir_y, dir_z, part_e, &
+      e_out, b_out)
 
     REAL(num) :: calculate_chi
     REAL(num), INTENT(IN) :: part_x, part_y, part_z
     REAL(num), INTENT(IN) :: dir_x, dir_y, dir_z, part_e
     REAL(num) :: e_at_part(3), b_at_part(3), q(3)
     REAL(num) :: e_dot_dir, calculate_chi_roland
+    ! Used by the spin routine
+    REAL(num), INTENT(OUT), OPTIONAL :: e_out(3), b_out(3)
 
     CALL field_at_particle(part_x, part_y, part_z, e_at_part, b_at_part)
 
@@ -766,7 +1117,8 @@ CONTAINS
 
     ! Determine chi from fields
     calculate_chi = calculate_chi_roland
-
+    IF (PRESENT(e_out)) e_out = e_at_part
+    IF (PRESENT(b_out)) b_out = b_at_part
   END FUNCTION calculate_chi
 
 
@@ -901,24 +1253,41 @@ CONTAINS
     b_at_part(2) = fac * by_part
     b_at_part(3) = fac * bz_part
 
+    ! Uniform external fields (fields block, for tests)
+    IF (use_external_fields) THEN
+      e_at_part = e_at_part + external_e
+      b_at_part = b_at_part + external_b
+    END IF
+
   END SUBROUTINE field_at_particle
 
 
 
-  SUBROUTINE generate_photon(generating_electron, iphoton, eta)
-
+  SUBROUTINE generate_photon(generating_electron, iphoton, eta, zeta, &
+      a_spin, e_field, b_field, charge)
+    ! SPIN change:
     ! Generates a photon moving in same direction as electron
-    ! (generates entirely new photon)
+    ! With zeta and a_spin (SPIN, use_spin_qed), the photon energy 
+    ! comes from the spin-resolved spectrum of the emitting lepton; 
+    !  with the fields at the lepton and  its charge as well, 
+    ! the lepton's final spin and the photon's
+    ! polarisation are set by nlcs_final_states.
 
     TYPE(particle), POINTER :: generating_electron
     INTEGER, INTENT(IN) :: iphoton
     REAL(num), INTENT(IN) :: eta
+    REAL(num), INTENT(IN), OPTIONAL :: zeta, a_spin
+    REAL(num), INTENT(IN), OPTIONAL :: e_field(3), b_field(3), charge
     REAL(num) :: dir_x, dir_y, dir_z, mag_p, generating_gamma
     REAL(num) :: rand_temp, photon_energy
     REAL(num) :: g_eta, sync_force, sync_rate, taubar_c, beta
     REAL(num) :: rad_limit = 1.0_num
-    LOGICAL :: samp_photon
+    LOGICAL :: samp_photon, make_photon
     TYPE(particle), POINTER :: new_photon
+#ifdef SPIN
+    REAL(num) :: u_mag, xi_stored(3), spin_avg(3), chi_photon
+    LOGICAL :: spin_event, spin_down
+#endif
 
     mag_p = MAX(SQRT(generating_electron%part_p(1)**2 &
         + generating_electron%part_p(2)**2 &
@@ -929,11 +1298,44 @@ CONTAINS
     dir_z = generating_electron%part_p(3) / mag_p
 
     generating_gamma = SQRT(1.0_num + (mag_p / m0 / c)**2)
+#ifdef SPIN
+    ! The final states use the lepton before recoil
+    u_mag = mag_p / (m0 * c)
+#endif
 
     ! Determine photon energy
 
     rand_temp = random()
+#ifdef SPIN
+    ! Use Int F^-1_{up,down} to sample momentum transfer
+    IF (PRESENT(zeta) .AND. PRESENT(a_spin)) THEN
+      ! W = W_up (1 + zeta)/2 + W_down (1 - zeta)/2: pick the spectrum
+      ! by its weight at this step (exact, by linearity in zeta)
+      spin_down = random() < nlcs_down_probability(zeta, a_spin)
+      IF (use_nlcs_quantile_tables) THEN
+        IF (spin_down) THEN
+          chi_photon = nlcs_quantile_chi(rand_temp, eta, nlcs_q_down)
+        ELSE
+          chi_photon = nlcs_quantile_chi(rand_temp, eta, nlcs_q_up)
+        END IF
+        ! As in calculate_photon_energy
+        photon_energy = (2.0_num * chi_photon / eta) * generating_gamma &
+            * m0 * c**2
+      ELSE IF (spin_down) THEN
+        photon_energy = calculate_photon_energy(rand_temp, eta, &
+            generating_gamma, nlcs_cdf_down)
+      ELSE
+        photon_energy = calculate_photon_energy(rand_temp, eta, &
+            generating_gamma, nlcs_cdf_up)
+      END IF
+    ELSE ! If something goes wrong or use_spin_qed not activated
+          ! use the old way
+      photon_energy = calculate_photon_energy(rand_temp, eta, &
+          generating_gamma)
+    END IF
+#else
     photon_energy = calculate_photon_energy(rand_temp, eta, generating_gamma)
+#endif
 
     IF (use_radiation_reaction) THEN
       IF (use_continuous_emission) THEN
@@ -974,8 +1376,39 @@ CONTAINS
     ! This will only create photons that have energies above a user specified
     ! cutoff and if photon generation is turned on. E+/- recoil is always
     ! considered
-    IF (photon_energy > photon_energy_min .AND. produce_photons &
-        .AND. samp_photon) THEN
+    make_photon = photon_energy > photon_energy_min .AND. produce_photons &
+        .AND. samp_photon
+
+#ifdef SPIN
+    ! Final lepton spin (always) and photon polarisation (if the photon
+    ! is created); lam = photon energy / nitial lepton energy = 2 chi / eta
+    spin_event = PRESENT(zeta) .AND. PRESENT(a_spin) &
+        .AND. PRESENT(e_field) .AND. PRESENT(b_field) .AND. PRESENT(charge)
+    IF (spin_event .AND. spin_nlcs == c_spin_process_photon_only) THEN
+      ! Photon from an unpolarised lepton, summed over its final spin;
+      ! the lepton's own spin is left as it is
+      spin_avg = 0.0_num
+      CALL nlcs_final_states(dir_x * u_mag, dir_y * u_mag, &
+          dir_z * u_mag, generating_gamma, e_field, b_field, charge, &
+          photon_energy / (generating_gamma * m0 * c**2), eta, make_photon, &
+          spin_avg, xi_stored)
+    ELSE IF (spin_event) THEN
+      ! radiative_spin_flip = F: the final states are drawn as usual
+      ! The lepton retains its initial spin.
+      ! The photon's Stokes vector, conditional on the drawn final spin,
+      ! averages to the one summed over the final spin.
+      spin_avg = generating_electron%spin
+      CALL nlcs_final_states(dir_x * u_mag, dir_y * u_mag, &
+          dir_z * u_mag, generating_gamma, e_field, b_field, charge, &
+          photon_energy / (generating_gamma * m0 * c**2), eta, make_photon, &
+          generating_electron%spin, xi_stored)
+      IF (.NOT. radiative_spin_flip) generating_electron%spin = spin_avg
+    END IF
+    ! photon_polarisation = F: every photon is unpolarised
+    IF (.NOT. photon_polarisation) xi_stored = 0.0_num
+#endif
+
+    IF (make_photon) THEN
       IF (photon_energy < c_tiny) photon_energy = c_tiny
 
       CALL create_particle(new_photon)
@@ -987,6 +1420,10 @@ CONTAINS
 
       new_photon%optical_depth = reset_optical_depth()
       new_photon%particle_energy = photon_energy
+#ifdef SPIN
+      ! Stokes vector on the photon's reference axes (zero otherwise)
+      IF (spin_event) new_photon%spin = xi_stored
+#endif
 
       IF (use_continuous_emission) THEN
         ! Calculate photon weight from synchrotron emission rate
@@ -1005,40 +1442,71 @@ CONTAINS
 
 
 
-  FUNCTION calculate_photon_energy(rand_seed, eta, generating_gamma)
+  FUNCTION calculate_photon_energy(rand_seed, eta, generating_gamma, &
+      p_table)
 
+    ! p_table: a photon-energy CDF on the grid of p_photon_energy
+    ! (default p_photon_energy, the spin-averaged ksi_sokolov.table)
     REAL(num) :: calculate_photon_energy
     REAL(num), INTENT(IN) :: rand_seed, eta, generating_gamma
-    REAL(num) :: eta_min, chi_tmp, chi_final
+    REAL(num), INTENT(IN), OPTIONAL :: p_table(:,:)
+    REAL(num) :: chi_final
 
-    eta_min = 10.0_num**MINVAL(log_eta)
-    ! In the classical case, always use the spectrum at minimum eta
-    IF (use_classical_emission .OR. (eta < eta_min)) THEN ! Extrapolate downwards with chi \propto eta^2
-      chi_tmp = find_value_from_table_alt(eta_min, rand_seed, &
-          n_sample_eta, n_sample_chi, log_eta, log_chi, p_photon_energy)
-      chi_final = chi_tmp * (eta / eta_min)**2
+    ! Check whether SPIN is used. 
+    IF (PRESENT(p_table)) THEN
+      chi_final = sample_chi(p_table)
     ELSE
-      chi_final = find_value_from_table_alt(eta, rand_seed, &
-          n_sample_eta, n_sample_chi, log_eta, log_chi, p_photon_energy)
+      chi_final = sample_chi(p_photon_energy)
     END IF
 
     calculate_photon_energy = (2.0_num * chi_final / eta) * generating_gamma &
         * m0 * c**2
+
+  CONTAINS
+
+    FUNCTION sample_chi(table)
+
+      REAL(num) :: sample_chi
+      REAL(num), INTENT(IN) :: table(n_sample_eta,n_sample_chi)
+      REAL(num) :: eta_min, chi_tmp
+
+      eta_min = 10.0_num**MINVAL(log_eta)
+      ! In the classical case, always use the spectrum at minimum eta
+      ! and extrapolate downwards with chi \propto eta^2
+      IF (use_classical_emission .OR. (eta < eta_min)) THEN
+        chi_tmp = find_value_from_table_alt(eta_min, rand_seed, &
+            n_sample_eta, n_sample_chi, log_eta, log_chi, table)
+        sample_chi = chi_tmp * (eta / eta_min)**2
+      ELSE
+        sample_chi = find_value_from_table_alt(eta, rand_seed, &
+            n_sample_eta, n_sample_chi, log_eta, log_chi, table)
+      END IF
+
+    END FUNCTION sample_chi
 
   END FUNCTION calculate_photon_energy
 
 
 
   SUBROUTINE generate_pair(generating_photon, chi_val, iphoton, ielectron, &
-      ipositron)
+      ipositron, xi_obs, a_nbw, e_field, b_field)
 
-    ! Generates a pair moving in same direction as photon
+    ! Generates a pair moving in same direction as photon. With xi_obs
+    ! and a_nbw (SPIN, use_spin_qed) the energy split comes from the
+    ! polarisation-resolved spectrum; with the fields at the photon as
+    ! well, the pair spins are set by nbw_final_states.
+    ! The implementation is non-invasive
     TYPE(particle), POINTER :: generating_photon
     REAL(num), INTENT(IN) :: chi_val
     INTEGER, INTENT(IN) :: iphoton, ielectron, ipositron
+    REAL(num), INTENT(IN), OPTIONAL :: xi_obs(3), a_nbw
+    REAL(num), INTENT(IN), OPTIONAL :: e_field(3), b_field(3)
     REAL(num) :: dir_x, dir_y, dir_z, mag_p
     REAL(num) :: probability_split, epsilon_frac, norm
     TYPE(particle), POINTER :: new_electron, new_positron
+#ifdef SPIN
+    LOGICAL :: spin_event
+#endif
 
     CALL create_particle(new_electron)
     CALL create_particle(new_positron)
@@ -1056,8 +1524,40 @@ CONTAINS
 
     probability_split = random()
 
+#ifdef SPIN
+    spin_event = PRESENT(xi_obs) .AND. PRESENT(a_nbw) &
+        .AND. PRESENT(e_field) .AND. PRESENT(b_field)
+    IF (spin_event) THEN
+      ! W = W_par (1 + xi1)/2 + W_perp (1 - xi1)/2: pick the spectrum by
+      ! its weight (exact, by linearity in xi1); epsilon_frac is the
+      ! electron fraction (the spectrum is symmetric)
+      IF (random() < nbw_par_probability(xi_obs(1), a_nbw)) THEN
+        epsilon_frac = find_value_from_table(chi_val, probability_split, &
+            n_nbw_chi, n_nbw_split, nbw_log_chi, nbw_split, nbw_cdf_par)
+      ELSE
+        epsilon_frac = find_value_from_table(chi_val, probability_split, &
+            n_nbw_chi, n_nbw_split, nbw_log_chi, nbw_split, nbw_cdf_perp)
+      END IF
+    ELSE IF (pair_tables == c_pair_tables_lcfa) THEN
+      ! Unpolarised photon (spin off): by linearity in xi1 the mixture
+      ! with par weight (1 - A)/2 is exactly the LCFA spectrum
+      IF (random() < nbw_par_probability(0.0_num, &
+          nbw_asymmetry(chi_val))) THEN
+        epsilon_frac = find_value_from_table(chi_val, probability_split, &
+            n_nbw_chi, n_nbw_split, nbw_log_chi, nbw_split, nbw_cdf_par)
+      ELSE
+        epsilon_frac = find_value_from_table(chi_val, probability_split, &
+            n_nbw_chi, n_nbw_split, nbw_log_chi, nbw_split, nbw_cdf_perp)
+      END IF
+    ELSE
+      epsilon_frac = find_value_from_table(chi_val, probability_split, &
+          n_sample_chi2, n_sample_epsilon, log_chi2, epsilon_split, &
+          p_energy)
+    END IF
+#else
     epsilon_frac = find_value_from_table(chi_val, probability_split, &
         n_sample_chi2, n_sample_epsilon, log_chi2, epsilon_split, p_energy)
+#endif
 
     mag_p = MAX(generating_photon%particle_energy / c, c_tiny)
 
@@ -1068,6 +1568,13 @@ CONTAINS
     new_positron%part_p(1) = (1.0_num - epsilon_frac) * mag_p * dir_x
     new_positron%part_p(2) = (1.0_num - epsilon_frac) * mag_p * dir_y
     new_positron%part_p(3) = (1.0_num - epsilon_frac) * mag_p * dir_z
+
+#ifdef SPIN
+    ! Pair spins (zero, i.e. unpolarised, otherwise)
+    IF (spin_event) CALL nbw_final_states(generating_photon%part_p, &
+        e_field, b_field, xi_obs, chi_val, epsilon_frac, new_electron%spin, &
+        new_positron%spin)
+#endif
 
     new_electron%optical_depth = reset_optical_depth()
     new_positron%optical_depth = reset_optical_depth()
@@ -1199,7 +1706,7 @@ CONTAINS
     REAL(num) :: fx, fp, y_lt, y_gt, x_value, y_interp, xdif1, xdif2, xdifm
     LOGICAL, SAVE :: warning = .TRUE.
 
-    x_value = LOG10(x_in)
+    x_value = LOG10(x_in) ! The interpolation is performed in log10-space
 
     ! Scan through x to find correct row of table
     i1 = 1

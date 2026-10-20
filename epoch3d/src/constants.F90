@@ -103,6 +103,48 @@ MODULE constants
   INTEGER, PARAMETER :: c_bd_z_min = 5
   INTEGER, PARAMETER :: c_bd_z_max = 6
 
+  ! Holger added this. NOt sure what it does yet
+#ifdef SPIN
+  INTEGER, PARAMETER :: c_spin_null = -1
+  INTEGER, PARAMETER :: c_spin_uniform = 1
+  INTEGER, PARAMETER :: c_spin_directed = 2
+  ! Marks an anomalous magnetic moment not (yet) set by the deck.
+  ! Non-physical, unlike -1 (which means g = 0)
+  REAL(num), PARAMETER :: c_anomalous_moment_unset = -HUGE(1.0_num)
+  ! Large-chi tail of a(chi)/a(0): f = s y (c0 + c1 y), y = chi^(-2/3)
+  ! (TABLES/gen_anomalous_moment_table.py prints these)
+  REAL(num), PARAMETER :: c_amm_tail0 = 0.51910910269057631_num
+  REAL(num), PARAMETER :: c_amm_tail1 = 0.75687263015135131_num
+  ! Small-x tails of R1 = K_1/3/K_2/3 and R2 = IntK_1/3/K_2/3:
+  ! R1 ~ e1 x^(1/3), R2 ~ d1 x^(2/3) (TABLES/gen_bessel_k_table.py)
+  REAL(num), PARAMETER :: c_bessel_e1 = 1.5702287534698010_num
+  REAL(num), PARAMETER :: c_bessel_d1 = 1.6876255256264092_num
+  ! Final states of a spin-resolved QED event (qed block
+  ! spin_final_states): collapse onto the quantisation axes, or keep
+  ! the mean (density-matrix) spin and polarisation
+  INTEGER, PARAMETER :: c_spin_final_collapse = 1
+  INTEGER, PARAMETER :: c_spin_final_mean = 2
+  ! NBW tables (qed block pair_tables): EPOCH's legacy pairprod.table
+  ! and energy_split.table, or the exact LCFA rate and energy split.
+  ! Unset resolves to lcfa with use_spin_qed, legacy otherwise.
+  INTEGER, PARAMETER :: c_pair_tables_unset = 0
+  INTEGER, PARAMETER :: c_pair_tables_legacy = 1
+  INTEGER, PARAMETER :: c_pair_tables_lcfa = 2
+  ! Treatment of NLCS and NBW with use_spin_qed (qed block spin_nlcs,
+  ! spin_nbw; for tests): resolved, unpolarised (exactly the
+  ! use_spin_qed = F treatment of that process, which neither reads
+  ! nor changes spins or polarisations) or off (no events at all).
+  ! photon_only (NLCS only) resolves the photon polarisation for a
+  ! lepton spin averaged over its initial and summed over its final
+  ! states, and never changes the lepton spin (as Ptarmigan does)
+  INTEGER, PARAMETER :: c_spin_process_resolved = 1
+  INTEGER, PARAMETER :: c_spin_process_unpolarised = 2
+  INTEGER, PARAMETER :: c_spin_process_off = 3
+  INTEGER, PARAMETER :: c_spin_process_photon_only = 4
+
+#endif
+
+
   ! Frequency function type codes
   INTEGER, PARAMETER :: c_of_omega = 1
   INTEGER, PARAMETER :: c_of_freq = 2
@@ -255,6 +297,18 @@ MODULE constants
   REAL(num), PARAMETER :: log_plasma_screen_const_2 = &
       LOG(SQRT(epsilon0 * kb) / q0 * m0 * c * alpha / 1.4_num / h_bar)
 #endif
+  
+  ! Constants used for spin/polarisation.
+  ! a_e and a_mu (the chi-independent constant version).
+  ! The muon value is from Wikipedia
+#ifdef SPIN
+  ! Electron anomalous moment (independent of chi here: fine structure constant/2pi)
+  REAL(num), PARAMETER :: anomalous_mag_dipole_moment_electron_constant = alpha/(2*pi)
+  REAL(num), PARAMETER :: anomalous_mag_dipole_moment_muon_constant = 0.001165920_num
+  ! Proton anomalous moment (mu_p / mu_N - 1), CODATA 2018
+  REAL(num), PARAMETER :: anomalous_mag_dipole_moment_proton_constant = &
+      1.79284734463_num
+#endif
 
   ! define special particle IDs
   INTEGER, PARAMETER :: c_species_id_generic = 0
@@ -316,6 +370,10 @@ MODULE constants
   INTEGER(i8), PARAMETER :: c_def_transition_rates = 2**28
   INTEGER(i8), PARAMETER :: c_def_brem_trident = 2**29
   INTEGER(i8), PARAMETER :: c_def_brem_muon = 2**30
+  ! Spin
+  INTEGER(i8), PARAMETER :: c_def_spin = 2_i8**31
+
+
 
   ! Stagger types
   INTEGER, PARAMETER :: c_stagger_ex = c_stagger_face_x
@@ -664,7 +722,14 @@ MODULE constants
   INTEGER, PARAMETER :: c_dump_part_rate_3br     = 78
   INTEGER, PARAMETER :: c_dump_part_dep_brem_tri = 79
   INTEGER, PARAMETER :: c_dump_part_opdep_bh_mu  = 80
-  INTEGER, PARAMETER :: num_vars_to_dump         = 80
+  ! Spin: how many parameters to dump??? Say 3 first
+  INTEGER, PARAMETER :: c_dump_part_spin_x  = 81
+  INTEGER, PARAMETER :: c_dump_part_spin_y  = 82
+  INTEGER, PARAMETER :: c_dump_part_spin_z  = 83
+  ! The following line needs to be changed as well!
+  INTEGER, PARAMETER :: num_vars_to_dump         = 83
+
+
 
   INTEGER, PARAMETER :: c_subset_random     = 1
   INTEGER, PARAMETER :: c_subset_gamma_min  = 2
