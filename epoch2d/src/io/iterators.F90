@@ -18,6 +18,9 @@ MODULE iterators
   USE particle_pointer_advance
   USE partlist
   USE particle_id_hash_mod
+#ifdef SPIN
+  USE spin, ONLY: spin_rest_to_lab, photon_pol_cartesian
+#endif
 
   IMPLICIT NONE
 
@@ -80,6 +83,9 @@ CONTAINS
     TYPE(particle_list), POINTER, SAVE :: current_list
     INTEGER :: part_count, ndim
     REAL(num) :: part_m, part_mc, part_mcc, part_mc2, gamma_mass, csqr, charge
+#ifdef SPIN
+    REAL(num) :: vec(3)
+#endif
 
     IF (start)  THEN
       CALL start_particle_list(current_species, current_list, cur)
@@ -394,24 +400,42 @@ CONTAINS
 #endif
 
 #ifdef SPIN
-      CASE (c_dump_part_spin_x)
-        ndim = 1
-        DO WHILE (ASSOCIATED(cur) .AND. (part_count < npoint_it))
-          part_count = part_count + 1
-          array(part_count) = cur%spin(ndim)
-          cur => cur%next
-        END DO
+      ! Lab frame: the spin four-vector of a lepton (spatial part) or the
+      ! Cartesian polarisation vector of a photon (spin.F90)
+      CASE (c_dump_part_spin_x, c_dump_part_spin_y, c_dump_part_spin_z)
+        ndim = param - c_dump_part_spin_x + 1
+#if defined(PHOTONS) || defined(BREMSSTRAHLUNG)
+        IF (current_species%species_type == c_species_id_photon) THEN
+          DO WHILE (ASSOCIATED(cur) .AND. (part_count < npoint_it))
+            part_count = part_count + 1
+            vec = photon_pol_cartesian(cur%part_p, cur%spin)
+            array(part_count) = vec(ndim)
+            cur => cur%next
+          END DO
+        ELSE
+#endif
+          DO WHILE (ASSOCIATED(cur) .AND. (part_count < npoint_it))
+            part_count = part_count + 1
+#ifdef PER_PARTICLE_CHARGE_MASS
+            part_mc = cur%mass * c
+#endif
+            IF (part_mc > 0.0_num) THEN
+              vec = spin_rest_to_lab(cur%spin, cur%part_p / part_mc)
+            ELSE
+              vec = cur%spin
+            END IF
+            array(part_count) = vec(ndim)
+            cur => cur%next
+          END DO
+#if defined(PHOTONS) || defined(BREMSSTRAHLUNG)
+        END IF
+#endif
 
-      CASE (c_dump_part_spin_y)
-        ndim = 2
-        DO WHILE (ASSOCIATED(cur) .AND. (part_count < npoint_it))
-          part_count = part_count + 1
-          array(part_count) = cur%spin(ndim)
-          cur => cur%next
-        END DO
-
-      CASE (c_dump_part_spin_z)
-        ndim = 3
+      ! The stored vector: rest-frame spin, or Stokes vector on the
+      ! photon's reference axes
+      CASE (c_dump_part_spin_x_rf, c_dump_part_spin_y_rf, &
+          c_dump_part_spin_z_rf)
+        ndim = param - c_dump_part_spin_x_rf + 1
         DO WHILE (ASSOCIATED(cur) .AND. (part_count < npoint_it))
           part_count = part_count + 1
           array(part_count) = cur%spin(ndim)

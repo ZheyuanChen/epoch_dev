@@ -1438,7 +1438,10 @@ CONTAINS
           CALL abort_code(c_err_pp_options_missing)
           STOP
 #endif
-        ELSE IF (block_id(1:7) == 'spin_x/') THEN
+        ! The stored spin is spin_x_rf; files written before the lab-frame
+        ! output (spin_x_lab, never read here) call it spin_x
+        ELSE IF (block_id(1:10) == 'spin_x_rf/' &
+            .OR. block_id(1:7) == 'spin_x/') THEN
 #ifdef SPIN
           CALL sdf_read_point_variable(sdf_handle, npart_local, &
               species_subtypes(ispecies), it_spin_x)
@@ -1451,7 +1454,8 @@ CONTAINS
           CALL abort_code(c_err_pp_options_missing)
           STOP
 #endif
-        ELSE IF (block_id(1:7) == 'spin_y/') THEN
+        ELSE IF (block_id(1:10) == 'spin_y_rf/' &
+            .OR. block_id(1:7) == 'spin_y/') THEN
 #ifdef SPIN
           CALL sdf_read_point_variable(sdf_handle, npart_local, &
               species_subtypes(ispecies), it_spin_y)
@@ -1464,7 +1468,8 @@ CONTAINS
           CALL abort_code(c_err_pp_options_missing)
           STOP
 #endif
-        ELSE IF (block_id(1:7) == 'spin_z/') THEN
+        ELSE IF (block_id(1:10) == 'spin_z_rf/' &
+            .OR. block_id(1:7) == 'spin_z/') THEN
 #ifdef SPIN
           CALL sdf_read_point_variable(sdf_handle, npart_local, &
               species_subtypes(ispecies), it_spin_z)

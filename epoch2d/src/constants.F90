@@ -721,12 +721,17 @@ MODULE constants
   INTEGER, PARAMETER :: c_dump_part_rate_3br     = 78
   INTEGER, PARAMETER :: c_dump_part_dep_brem_tri = 79
   INTEGER, PARAMETER :: c_dump_part_opdep_bh_mu  = 80
-  ! Spin: how many parameters to dump??? Say 3 first
-  INTEGER, PARAMETER :: c_dump_part_spin_x  = 81
-  INTEGER, PARAMETER :: c_dump_part_spin_y  = 82
-  INTEGER, PARAMETER :: c_dump_part_spin_z  = 83
+  ! Spin: spin_x/y/z are the lab-frame spin (leptons) or the Cartesian
+  ! polarisation vector (photons); spin_{x,y,z}_rf the stored vector
+  ! (rest-frame spin, or Stokes vector on the reference axes). 
+  INTEGER, PARAMETER :: c_dump_part_spin_x       = 81
+  INTEGER, PARAMETER :: c_dump_part_spin_y       = 82
+  INTEGER, PARAMETER :: c_dump_part_spin_z       = 83
+  INTEGER, PARAMETER :: c_dump_part_spin_x_rf    = 84
+  INTEGER, PARAMETER :: c_dump_part_spin_y_rf    = 85
+  INTEGER, PARAMETER :: c_dump_part_spin_z_rf    = 86
   ! The following line needs to be changed as well!
-  INTEGER, PARAMETER :: num_vars_to_dump         = 83
+  INTEGER, PARAMETER :: num_vars_to_dump         = 86
 
 
 
