@@ -50,6 +50,12 @@ CONTAINS
       use_LBW = .FALSE.
       use_LBW_diff = .TRUE.
       LBW_amp_factor = 1.0_num
+      use_full_landau_lifshitz = .FALSE.
+      ll_gradient_term = .TRUE.
+      ll_quadratic_term = .TRUE.
+      gaunt_factor = c_gaunt_ridgers2014
+      rr_midpoint = .FALSE.
+      rr_correction = .FALSE.
 #ifdef SPIN
       use_spin_qed = .FALSE.
       spin_second_order_depth = .FALSE.
@@ -270,6 +276,36 @@ CONTAINS
       RETURN
     ENDIF
 
+    ! Classical and semiclassical emission: the field-gradient and F F u
+    ! terms of the Landau-Lifshitz force as well (tests can drop one)
+    IF (str_cmp(element, 'use_full_landau_lifshitz')) THEN
+      use_full_landau_lifshitz = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'll_gradient_term')) THEN
+      ll_gradient_term = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'll_quadratic_term')) THEN
+      ll_quadratic_term = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Classical and semiclassical emission: radiation reaction as a
+    ! midpoint kick (second order) instead of an Euler kick
+    IF (str_cmp(element, 'rr_midpoint')) THEN
+      rr_midpoint = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Fit of g(eta) for semiclassical emission
+    IF (str_cmp(element, 'gaunt_factor')) THEN
+      gaunt_factor = as_gaunt_factor(value, errcode)
+      RETURN
+    END IF
+
     IF (str_cmp(element, 'photon_sample_fraction') &
         .OR. str_cmp(element, 'photon_downsampling')) THEN
       photon_sample_fraction = as_real_print(value, element, errcode)
@@ -436,6 +472,73 @@ CONTAINS
     use_continuous_emission = (use_continuous_emission &
                                .OR. use_classical_emission)
 
+    ! The extra Landau-Lifshitz terms act on the continuous (classical
+    ! or semiclassical) radiation reaction only
+    IF (use_qed .AND. use_full_landau_lifshitz &
+        .AND. (.NOT. use_continuous_emission &
+        .OR. .NOT. use_radiation_reaction)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'use_full_landau_lifshitz=T needs ', &
+              'use_radiation_reaction=T and classical_photon_emission=T ', &
+              'or semiclassical_photon_emission=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+    IF (use_qed .AND. rr_midpoint &
+        .AND. (.NOT. use_continuous_emission &
+        .OR. .NOT. use_radiation_reaction)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'rr_midpoint=T needs use_radiation_reaction=T ', &
+              'and classical_photon_emission=T or ', &
+              'semiclassical_photon_emission=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+    rr_correction = use_full_landau_lifshitz .OR. rr_midpoint
+
+    IF (use_qed .AND. .NOT. use_full_landau_lifshitz &
+        .AND. (.NOT. ll_gradient_term .OR. .NOT. ll_quadratic_term)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'll_gradient_term and ll_quadratic_term need ', &
+              'use_full_landau_lifshitz=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+    ! Classical emission has g = 1 whatever the fit
+    IF (use_qed .AND. use_classical_emission &
+        .AND. gaunt_factor /= c_gaunt_ridgers2014) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** WARNING ***'
+          WRITE(io,*) 'gaunt_factor has no effect with ', &
+              'classical_photon_emission=T (g = 1).'
+        END DO
+      END IF
+    END IF
+
 #ifdef SPIN
     ! Continuous emission has no discrete events to resolve spin with
     IF (use_qed .AND. use_spin_qed .AND. use_continuous_emission) THEN
@@ -474,6 +577,29 @@ CONTAINS
 #endif
 
   END FUNCTION qed_block_check
+
+
+
+#ifdef PHOTONS
+  FUNCTION as_gaunt_factor(str_in, err) RESULT(res)
+
+    ! Value of gaunt_factor: ridgers2014 (default) or esirkepov2015
+    CHARACTER(*), INTENT(IN) :: str_in
+    INTEGER, INTENT(INOUT) :: err
+    INTEGER :: res
+
+    res = c_gaunt_ridgers2014
+    IF (str_cmp(str_in, 'ridgers2014') .OR. str_cmp(str_in, 'ridgers')) THEN
+      res = c_gaunt_ridgers2014
+    ELSE IF (str_cmp(str_in, 'esirkepov2015') &
+        .OR. str_cmp(str_in, 'esirkepov')) THEN
+      res = c_gaunt_esirkepov2015
+    ELSE
+      err = IOR(err, c_err_bad_value)
+    END IF
+
+  END FUNCTION as_gaunt_factor
+#endif
 
 
 

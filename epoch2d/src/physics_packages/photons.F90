@@ -574,7 +574,7 @@ CONTAINS
     REAL(num) :: part_ux, part_uy, part_uz
     REAL(num) :: dir_x, dir_y, dir_z
     REAL(num) :: eta, chi_val, part_e, gamma_rel, norm
-    REAL(num) :: dtau
+    REAL(num) :: dtau, f_ll(3)
     LOGICAL :: legacy_step
 #ifdef SPIN
     REAL(num) :: dtau_avg, f_event, f_rest
@@ -614,7 +614,15 @@ CONTAINS
 
           ! If using continuous emission emit a photon macroparticle at every timestep
           IF (use_continuous_emission) THEN
+            ! The other Landau-Lifshitz terms (field-gradient and
+            ! quadratic fields), and the midpoint kick's correction, from
+            ! the momentum before this step's radiation reaction
+            IF (rr_correction) CALL rr_correction_force(part_x, part_y, &
+                part_ux, part_uy, part_uz, gamma_rel, &
+                species_list(ispecies)%charge, eta, f_ll)
             CALL generate_photon(current, photon_species, eta)
+            IF (rr_correction) &
+                current%part_p = current%part_p + dt * f_ll
           ELSE IF (use_emission_substeps) THEN
             ! The whole step, event by event (emissions and spin)
 #ifdef SPIN
@@ -1328,9 +1336,16 @@ CONTAINS
     IF (use_radiation_reaction) THEN
       IF (use_continuous_emission) THEN
 	! Calculate the momentum loss from the Landau-Lifshitz force
+        ! As gaunt_g, written out here: with -ffast-math, calling
+        ! gaunt_g instead changes the rounding of this force
         IF (use_classical_emission) THEN
           g_eta = 1.0_num
+        ELSE IF (gaunt_factor == c_gaunt_esirkepov2015) THEN
+          ! Esirkepov et al. (2015)
+          g_eta = (1.0_num + eta * (18.0_num + eta * (69.0_num &
+              + eta * (73.0_num + 5.806_num * eta))))**(-1.0_num / 3.0_num)
         ELSE
+          ! Ridgers et al. (2014) -- the legacy default way
           g_eta = (1.0_num+4.8_num*(1.0_num+eta)*&
                 log(1.0_num+1.7_num*eta)+2.44_num*eta*eta)**(-2.0_num/3.0_num)
         END IF
@@ -1427,6 +1442,235 @@ CONTAINS
     END IF
 
   END SUBROUTINE generate_photon
+
+
+
+  FUNCTION gaunt_g(eta)
+
+    ! Gaunt factor g(eta) of the radiation reaction force: 1 for
+    ! classical emission, a fit (qed block gaunt_factor) otherwise.
+    ! generate_photon writes the same out (keep the two in step)
+    REAL(num), INTENT(IN) :: eta
+    REAL(num) :: gaunt_g
+
+    IF (use_classical_emission) THEN
+      gaunt_g = 1.0_num
+    ELSE IF (gaunt_factor == c_gaunt_esirkepov2015) THEN
+      ! Esirkepov et al. (2015)
+      gaunt_g = (1.0_num + eta * (18.0_num + eta * (69.0_num &
+          + eta * (73.0_num + 5.806_num * eta))))**(-1.0_num / 3.0_num)
+    ELSE
+      ! Ridgers et al. (2014) -- the legacy default way
+      gaunt_g = (1.0_num+4.8_num*(1.0_num+eta)*&
+            log(1.0_num+1.7_num*eta)+2.44_num*eta*eta)**(-2.0_num/3.0_num)
+    END IF
+
+  END FUNCTION gaunt_g
+
+
+
+  SUBROUTINE ll_gather(part_x, part_y, e_at_part, b_at_part, grad)
+
+    ! Fields at the particle and, for the gradient term, their space
+    ! derivatives: grad(:,1:4) = dE/dx, dB/dx, dE/dy, dB/dy. These are
+    ! central differences of the interpolated fields over one cell
+    ! (d/dz = 0 in 2D); zero without the gradient term
+    REAL(num), INTENT(IN) :: part_x, part_y
+    REAL(num), INTENT(OUT) :: e_at_part(3), b_at_part(3), grad(3,4)
+    REAL(num) :: e_p(3), b_p(3), e_m(3), b_m(3)
+
+    CALL field_at_particle(part_x, part_y, e_at_part, b_at_part)
+    grad = 0.0_num
+    IF (.NOT. (use_full_landau_lifshitz .AND. ll_gradient_term)) RETURN
+
+    CALL field_at_particle(part_x + 0.5_num * dx, part_y, e_p, b_p)
+    CALL field_at_particle(part_x - 0.5_num * dx, part_y, e_m, b_m)
+    grad(:,1) = (e_p - e_m) / dx
+    grad(:,2) = (b_p - b_m) / dx
+    CALL field_at_particle(part_x, part_y + 0.5_num * dy, e_p, b_p)
+    CALL field_at_particle(part_x, part_y - 0.5_num * dy, e_m, b_m)
+    grad(:,3) = (e_p - e_m) / dy
+    grad(:,4) = (b_p - b_m) / dy
+
+  END SUBROUTINE ll_gather
+
+
+
+  SUBROUTINE ll_terms(v, gamma_rel, charge, g_eta, e_at_part, b_at_part, &
+      grad, force)
+
+    ! The field-gradient and F F u terms of the Landau-Lifshitz force,
+    ! dp/dt, for velocity v (Landau and Lifshitz, Classical Theory of
+    ! Fields, section 76), in SI with tau0 = q0^2 / (6 pi epsilon0 m0 c^3):
+    !   gradient:  tau0 q gamma [D E/Dt + v x D B/Dt]
+    !   quadratic: g tau0 (q^2 / m0) [E x B + B x (B x v) + E (v.E) / c^2]
+    ! with D/Dt = d/dt + v.grad. The quadratic term is the space part of
+    ! the term in F F u, divided by gamma. It carries the same g as the
+    ! term in (F u)^2 u, so that the two together stay orthogonal to u
+    ! (the force keeps u.u = 1); the gradient term, orthogonal to u by
+    ! itself, has no g. The time derivatives assume source-free fields
+    ! at the particle (dE/dt = c^2 curl B, dB/dt = -curl E). The uniform
+    ! external fields enter the quadratic term only.
+    REAL(num), INTENT(IN) :: v(3), gamma_rel, charge, g_eta
+    REAL(num), INTENT(IN) :: e_at_part(3), b_at_part(3), grad(3,4)
+    REAL(num), INTENT(OUT) :: force(3)
+    REAL(num) :: de(3), db(3), tau0
+
+    tau0 = q0**2 / (6.0_num * pi * epsilon0 * m0 * c**3)
+    force = 0.0_num
+
+    IF (ll_gradient_term) THEN
+      ! d/dt from the source-free Maxwell equations ...
+      de(1) = c**2 * grad(3,4)
+      de(2) = -c**2 * grad(3,2)
+      de(3) = c**2 * (grad(2,2) - grad(1,4))
+      db(1) = -grad(3,3)
+      db(2) = grad(3,1)
+      db(3) = grad(1,3) - grad(2,1)
+      ! ... plus v.grad
+      de = de + v(1) * grad(:,1) + v(2) * grad(:,3)
+      db = db + v(1) * grad(:,2) + v(2) * grad(:,4)
+
+      force = tau0 * charge * gamma_rel * (de + ll_cross(v, db))
+    END IF
+
+    IF (ll_quadratic_term) THEN
+      force = force + g_eta * tau0 * (charge**2 / m0) &
+          * (ll_cross(e_at_part, b_at_part) &
+          + ll_cross(b_at_part, ll_cross(b_at_part, v)) &
+          + e_at_part * DOT_PRODUCT(v, e_at_part) / c**2)
+    END IF
+
+  CONTAINS
+
+    FUNCTION ll_cross(a, b)
+
+      REAL(num), INTENT(IN) :: a(3), b(3)
+      REAL(num) :: ll_cross(3)
+
+      ll_cross(1) = a(2) * b(3) - a(3) * b(2)
+      ll_cross(2) = a(3) * b(1) - a(1) * b(3)
+      ll_cross(3) = a(1) * b(2) - a(2) * b(1)
+
+    END FUNCTION ll_cross
+
+  END SUBROUTINE ll_terms
+
+
+
+  SUBROUTINE rr_correction_force(part_x, part_y, part_ux, part_uy, &
+      part_uz, gamma_rel, charge, eta, force)
+
+    ! What qed_update_optical_depth adds, as dp/dt over the step, to the
+    ! radiation reaction of generate_photon (classical and semiclassical
+    ! emission). generate_photon applies the term in (F u)^2 u as an
+    ! Euler kick from the momentum at the start of the step, p_start.
+
+    ! rr_midpoint = F: the force is ll_terms at p_start (needs
+    ! use_full_landau_lifshitz). rr_midpoint = T: the force turns that
+    ! kick into a midpoint kick in the fields at the start of the
+    ! step,
+    !   p_half = p_start + (dt / 2) F(p_start)
+    !   p_mid  = p_start + dt F(p_half)
+    !   force  = (p_mid - p_euler) / dt
+    ! F being the leading term plus, with use_full_landau_lifshitz,
+    ! ll_terms; p_euler is generate_photon's kick, worked out here. (A
+    ! kick applied in place of generate_photon's would change the code
+    ! around that call, which changed the default results in the last
+    ! bit under -ffast-math.) If the leading term would take more than
+    ! |p_start| in one step (dt far too large), the Euler kick is kept,
+    ! with ll_terms at p_start.
+
+    ! To put it simple, F is the original first order solver (Euler kick)
+    ! while T is an attempt to make RR 2nd order.
+    ! That is, for F the error decreases linearly with Delta t 
+    ! where delta t is the time step and for T quadratically  
+    ! But note that atm T is not a true second-order. For this to be 
+    ! true second order we need to place the RR routine in the middle of 
+    ! the particle pusher. Note that the photon (QED) routine takes
+    ! place at full time steps. To make it true second-order requires
+    ! invasive modifications.
+    REAL(num), INTENT(IN) :: part_x, part_y
+    REAL(num), INTENT(IN) :: part_ux, part_uy, part_uz, gamma_rel, charge
+    REAL(num), INTENT(IN) :: eta
+    REAL(num), INTENT(OUT) :: force(3)
+    REAL(num) :: e_at_part(3), b_at_part(3), grad(3,4)
+    REAL(num) :: p_start(3), p_half(3), p_euler(3), v(3)
+    REAL(num) :: f_start(3), f_ll_start(3), f_half(3), f_ll_half(3)
+    REAL(num) :: mag_p, sync_start, sync_half, sync_euler, beta
+
+    CALL ll_gather(part_x, part_y, e_at_part, b_at_part, grad)
+
+    IF (.NOT. rr_midpoint) THEN
+      v(1) = c * part_ux / gamma_rel
+      v(2) = c * part_uy / gamma_rel
+      v(3) = c * part_uz / gamma_rel
+      CALL ll_terms(v, gamma_rel, charge, gaunt_g(eta), e_at_part, &
+          b_at_part, grad, force)
+      RETURN
+    END IF
+
+    p_start(1) = part_ux * mc0
+    p_start(2) = part_uy * mc0
+    p_start(3) = part_uz * mc0
+    mag_p = MAX(SQRT(SUM(p_start**2)), c_tiny)
+
+    CALL rr_force(p_start, f_start, f_ll_start, sync_start)
+    p_half = p_start + 0.5_num * dt * f_start
+    CALL rr_force(p_half, f_half, f_ll_half, sync_half)
+
+    ! generate_photon's kick, with its eta (from calculate_eta)
+    beta = SQRT(1.0_num - 1.0_num / (1.0_num + (mag_p / mc0)**2))
+    sync_euler = 2.0_num * alpha_f * m0 * c &
+        / (3.0_num * h_bar / m0 / c / c) * beta * eta**2 * gaunt_g(eta)
+
+    IF (dt * MAX(sync_start, sync_half, sync_euler) < mag_p) THEN
+      p_euler = p_start * (1.0_num - dt * sync_euler / mag_p)
+      force = (p_start + dt * f_half - p_euler) / dt
+    ELSE
+      force = f_ll_start
+    END IF
+
+  CONTAINS
+
+    SUBROUTINE rr_force(p, force, f_ll, sync_force)
+
+      ! Radiation reaction force (all terms) and its extra
+      ! Landau-Lifshitz part f_ll at momentum p, in the gathered fields;
+      ! sync_force is the magnitude of the leading term
+      REAL(num), INTENT(IN) :: p(3)
+      REAL(num), INTENT(OUT) :: force(3), f_ll(3), sync_force
+      REAL(num) :: u(3), v(3), gamma_p, mag, eta_p, g_p, f_perp(3)
+
+      u = p / mc0
+      gamma_p = SQRT(1.0_num + SUM(u**2))
+      v = c * u / gamma_p
+      mag = MAX(SQRT(SUM(p**2)), c_tiny)
+
+      ! eta as calculate_eta, from the fields:
+      ! (eta e_s)^2 = gamma^2 [(E + v x B)^2 - (v.E / c)^2]
+      f_perp(1) = e_at_part(1) + v(2) * b_at_part(3) - v(3) * b_at_part(2)
+      f_perp(2) = e_at_part(2) + v(3) * b_at_part(1) - v(1) * b_at_part(3)
+      f_perp(3) = e_at_part(3) + v(1) * b_at_part(2) - v(2) * b_at_part(1)
+      eta_p = gamma_p * SQRT(MAX(SUM(f_perp**2) &
+          - (DOT_PRODUCT(v, e_at_part) / c)**2, 0.0_num)) / e_s
+      g_p = gaunt_g(eta_p)
+
+      sync_force = 2.0_num * alpha_f * m0 * c &
+          / (3.0_num * h_bar / m0 / c / c) * (mag / mc0 / gamma_p) &
+          * eta_p**2 * g_p
+      force = -sync_force * p / mag
+
+      f_ll = 0.0_num
+      IF (use_full_landau_lifshitz) THEN
+        CALL ll_terms(v, gamma_p, charge, g_p, e_at_part, b_at_part, &
+            grad, f_ll)
+        force = force + f_ll
+      END IF
+
+    END SUBROUTINE rr_force
+
+  END SUBROUTINE rr_correction_force
 
 
 

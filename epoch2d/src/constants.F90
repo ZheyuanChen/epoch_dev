@@ -102,6 +102,12 @@ MODULE constants
   INTEGER, PARAMETER :: c_bd_z_min = 5
   INTEGER, PARAMETER :: c_bd_z_max = 6
 
+  ! Gaunt factor g(eta) of semiclassical radiation reaction (qed block
+  ! gaunt_factor): the fit of Ridgers et al., J. Comput. Phys. 260, 273
+  ! (2014), or that of Esirkepov et al., Phys. Lett. A 379, 2044 (2015)
+  INTEGER, PARAMETER :: c_gaunt_ridgers2014 = 1
+  INTEGER, PARAMETER :: c_gaunt_esirkepov2015 = 2
+
   ! Holger added this. NOt sure what it does yet
 #ifdef SPIN
   INTEGER, PARAMETER :: c_spin_null = -1

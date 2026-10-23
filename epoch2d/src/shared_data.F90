@@ -652,6 +652,24 @@ MODULE shared_data
   LOGICAL :: produce_photons = .FALSE., photon_dynamics = .FALSE.
   CHARACTER(LEN=string_length) :: qed_table_location
   LOGICAL :: use_continuous_emission = .FALSE., use_classical_emission=.FALSE.
+  ! Landau-Lifshitz force of classical and semiclassical emission (qed
+  ! block use_full_landau_lifshitz). F: the term in (F u)^2 u only,
+  ! times g(eta) for semiclassical emission. T: the field-gradient term
+  ! (without g) and the term in F F u (times g) as well.
+  ! ll_gradient_term and ll_quadratic_term (tests) drop
+  ! one of the two.
+  LOGICAL :: use_full_landau_lifshitz = .FALSE.
+  LOGICAL :: ll_gradient_term = .TRUE., ll_quadratic_term = .TRUE.
+  ! Time step of classical and semiclassical radiation reaction (qed
+  ! block rr_midpoint). F: an explicit (Euler) kick from the momentum at
+  ! the start of the step, first order in dt. T: a midpoint (RK2) kick
+  ! in the fields of the start of the step, second order
+  LOGICAL :: rr_midpoint = .FALSE.
+  ! use_full_landau_lifshitz .OR. rr_midpoint (set by the qed block)
+  LOGICAL :: rr_correction = .FALSE.
+  ! Fit used for g(eta) with semiclassical emission (qed block
+  ! gaunt_factor), c_gaunt_ridgers2014 or c_gaunt_esirkepov2015
+  INTEGER :: gaunt_factor = c_gaunt_ridgers2014
   REAL(num) :: photon_sample_fraction = 1.0_num
   ! use_emission_subsetps:
   ! Discrete emission followed event by event within a step (qed block
