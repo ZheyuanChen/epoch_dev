@@ -869,7 +869,8 @@ CONTAINS
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
     INTEGER(KIND=i4), DIMENSION(:), POINTER :: idbuf4
     INTEGER(KIND=i8), DIMENSION(:), POINTER :: idbuf8
-    INTEGER :: i, id_offset
+    INTEGER :: i
+    INTEGER(i8) :: id_offset
     INTEGER, DIMENSION(:), POINTER :: part_counts
 #endif
     TYPE(particle_species), POINTER :: species
@@ -956,10 +957,14 @@ CONTAINS
         ALLOCATE(part_counts(0:nproc-1))
         CALL MPI_ALLGATHER(part_count, 1, MPI_INTEGER4, part_counts, 1, &
             MPI_INTEGER4, comm, errcode)
-        id_offset = 0
-        DO i = 0, rank
+        ! Number on from the IDs already assigned, after those of the
+        ! lower ranks
+        id_offset = particles_max_id
+        DO i = 0, rank - 1
           id_offset = id_offset + part_counts(i)
         END DO
+        particles_max_id = particles_max_id + SUM(INT(part_counts, i8))
+        DEALLOCATE(part_counts)
       END IF
 #endif
 
@@ -1008,6 +1013,11 @@ CONTAINS
         ! Just being careful
         NULLIFY(new_particle)
       END DO
+
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+      ! IDs from a file must not be handed out again
+      IF (curr_loader%id_data_given) CALL raise_particles_max_id
+#endif
 
       ! Need to keep totals accurate
       CALL MPI_ALLREDUCE(partlist%count, species%count, 1, MPI_INTEGER8, &

@@ -248,7 +248,6 @@ CONTAINS
       probes_for_species = ASSOCIATED(current_probe)
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
       IF (probes_for_species) THEN
-        gpi_call_site = c_gpi_particles_push
         CALL generate_particle_ids(species_list(ispecies)%attached_list)
         current => species_list(ispecies)%attached_list%head
       END IF
@@ -885,6 +884,15 @@ CONTAINS
     REAL(num) :: path_frac
 #endif
 
+#ifndef NO_PARTICLE_PROBES
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+    ! generate_particle_ids is collective, so it must come before the
+    ! early return below, which ranks without photons take
+    IF (ASSOCIATED(species_list(ispecies)%attached_probes)) &
+        CALL generate_particle_ids(species_list(ispecies)%attached_list)
+#endif
+#endif
+
     IF (species_list(ispecies)%attached_list%count == 0) RETURN
 
     bc_species = species_list(ispecies)%bc_particle
@@ -931,12 +939,6 @@ CONTAINS
 #ifndef NO_PARTICLE_PROBES
     current_probe => species_list(ispecies)%attached_probes
     probes_for_species = ASSOCIATED(current_probe)
-#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
-    IF (probes_for_species) THEN
-      gpi_call_site = c_gpi_particles_photon_push
-      CALL generate_particle_ids(species_list(ispecies)%attached_list)
-    END IF
-#endif
 #endif
     dtfac = dt * c**2
 

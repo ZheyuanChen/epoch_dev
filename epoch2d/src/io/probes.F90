@@ -342,7 +342,6 @@ CONTAINS
 
     IF (start)  THEN
       cur => current_list%head
-      gpi_call_site = c_gpi_probes8
       CALL generate_particle_ids(current_list)
     END IF
     part_count = 0
@@ -381,7 +380,6 @@ CONTAINS
 
     IF (start)  THEN
       cur => current_list%head
-      gpi_call_site = c_gpi_probes4
       CALL generate_particle_ids(current_list)
     END IF
     part_count = 0

@@ -452,6 +452,15 @@ CONTAINS
         CALL sdf_write_srl(sdf_handle, 'file_numbers', &
             'Output File Sequence Numbers', file_numbers)
 
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+        ! IDs are never reused, including those of particles that have
+        ! left. IDs assigned later in this dump are recovered from the
+        ! particles on restart. Stored as a real (exact below 2^53):
+        ! the SDF library labels 8-byte integer arrays as 4-byte.
+        CALL sdf_write_srl(sdf_handle, 'particles_max_id', &
+            'Largest particle ID assigned', REAL(particles_max_id, num))
+#endif
+
         IF (need_random_state) THEN
           CALL get_random_state(random_state)
           ALLOCATE(random_states_per_proc(4*nproc))
@@ -2458,7 +2467,6 @@ CONTAINS
     ! Update particle ID values if using
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
     DO i = 1, n_species
-      gpi_call_site = c_gpi_species_subset
       CALL generate_particle_ids(species_list(i)%attached_list)
     END DO
 #endif
@@ -2553,9 +2561,6 @@ CONTAINS
         IF (.NOT. sub%use_species(ispec)) THEN
           CYCLE
         END IF
-#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
-        gpi_call_site = c_gpi_persistent_subset
-#endif
         CALL generate_particle_ids(species_list(ispec)%attached_list)
 
         part_mc = c * species_list(ispec)%mass

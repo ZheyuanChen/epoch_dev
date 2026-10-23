@@ -830,6 +830,9 @@ CONTAINS
     INTEGER :: i, is, iblock, nblocks, ndims, geometry
     INTEGER(i8) :: npart, npart_local
     INTEGER(i8), ALLOCATABLE :: nparts(:), npart_locals(:), npart_proc(:)
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+    REAL(num) :: max_id_from_restart
+#endif
     INTEGER, DIMENSION(4) :: dims
     INTEGER, ALLOCATABLE :: random_states_per_proc(:)
     INTEGER, ALLOCATABLE :: random_states_per_proc_old(:)
@@ -1148,6 +1151,11 @@ CONTAINS
           END DO
         ELSE IF (str_cmp(block_id, 'elapsed_time')) THEN
           CALL sdf_read_srl(sdf_handle, old_elapsed_time)
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+        ELSE IF (str_cmp(block_id, 'particles_max_id')) THEN
+          CALL sdf_read_srl(sdf_handle, max_id_from_restart)
+          particles_max_id = NINT(max_id_from_restart, i8)
+#endif
         END IF
       CASE(c_blocktype_plain_mesh)
         IF (str_cmp(block_id, 'grid') .OR. str_cmp(block_id, 'grid_full')) THEN
@@ -1528,6 +1536,10 @@ CONTAINS
     CALL sdf_close(sdf_handle)
     CALL free_subtypes_for_load(species_subtypes, species_subtypes_i4, &
         species_subtypes_i8)
+
+    ! New particles must not reuse the IDs read in. Dumps written
+    ! before particles_max_id was saved rely on this alone.
+    CALL raise_particles_max_id
 
     ! Reset dump_at_walltimes
     DO i = 1, n_io_blocks

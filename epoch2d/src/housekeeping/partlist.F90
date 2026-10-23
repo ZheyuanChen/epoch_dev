@@ -27,25 +27,6 @@ MODULE partlist
 
   INTEGER :: nvar
 
-#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
-  ! Deadlock-diagnosis instrumentation: tags the call site immediately
-  ! before each CALL generate_particle_ids(...), so a per-rank trace log
-  ! can pinpoint a call-count mismatch across ranks (root cause of an
-  ! observed MPI_ALLREDUCE hang). Confined entirely to this ifdef.
-  INTEGER :: gpi_call_site = 0
-  INTEGER :: gpi_trace_unit = -1
-  INTEGER, PARAMETER :: c_gpi_particles_push = 1
-  INTEGER, PARAMETER :: c_gpi_particles_photon_push = 2
-  INTEGER, PARAMETER :: c_gpi_probes8 = 3
-  INTEGER, PARAMETER :: c_gpi_probes4 = 4
-  INTEGER, PARAMETER :: c_gpi_iter_i4_start = 5
-  INTEGER, PARAMETER :: c_gpi_iter_i4_advance = 6
-  INTEGER, PARAMETER :: c_gpi_iter_i8_start = 7
-  INTEGER, PARAMETER :: c_gpi_iter_i8_advance = 8
-  INTEGER, PARAMETER :: c_gpi_species_subset = 9
-  INTEGER, PARAMETER :: c_gpi_persistent_subset = 10
-#endif
-
   TYPE pointer_item
     TYPE(particle), POINTER :: part
     TYPE(pointer_item), POINTER :: next
@@ -988,26 +969,12 @@ CONTAINS
 
     TYPE(particle_list) :: partlist
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
-    INTEGER(i8), ALLOCATABLE :: nid_all(:)
-    INTEGER(i8) :: nid, part_id
+    INTEGER(i8), ALLOCATABLE :: nid_all(:,:)
+    INTEGER(i8) :: nid, part_id, id_max, id_info(2)
     INTEGER :: i, id_update
     TYPE(particle), POINTER :: current
     TYPE(pointer_list) :: idlist
     TYPE(pointer_item), POINTER :: idcurrent, idnext
-    CHARACTER(LEN=12) :: gpi_rank_str
-
-    ! Deadlock-diagnosis trace: write before the collective below, so a
-    ! hung run still leaves each rank's last call site on disk.
-    IF (gpi_trace_unit < 0) THEN
-      gpi_trace_unit = 43
-      WRITE(gpi_rank_str, '(i0)') rank
-      OPEN(UNIT=gpi_trace_unit, STATUS='REPLACE', ACTION='WRITE', &
-          FILE='particle_id_trace.' // TRIM(gpi_rank_str))
-    END IF
-    WRITE(gpi_trace_unit, '(''step='',i8,'' site='',i2,'' id_update='',i8, &
-        &'' count='',i12)') step, gpi_call_site, partlist%id_update, &
-        partlist%count
-    FLUSH(gpi_trace_unit)
 
     id_update = partlist%id_update
 
@@ -1022,32 +989,39 @@ CONTAINS
     NULLIFY(idlist%head%part)
 
     ! Scan through particle list and identify particles which need
-    ! an ID to be assigned.
+    ! an ID to be assigned. Also find the largest existing ID, so that
+    ! IDs given elsewhere (e.g. by a file injector) are not handed out.
     nid = 0
+    id_max = 0
     current => partlist%head
     DO WHILE(ASSOCIATED(current))
       IF (current%id == 0) THEN
         nid = nid + 1
         CALL add_particle_to_list(current, idlist)
+      ELSE
+        id_max = MAX(id_max, INT(current%id, i8))
       END IF
       current => current%next
     END DO
 
-    ALLOCATE(nid_all(nproc))
+    ALLOCATE(nid_all(2,nproc))
 
-    CALL MPI_ALLGATHER(nid, 1, MPI_INTEGER8, nid_all, 1, MPI_INTEGER8, &
-        comm, errcode)
+    id_info = (/nid, id_max/)
+    CALL MPI_ALLGATHER(id_info, 2, MPI_INTEGER8, nid_all, 2, &
+        MPI_INTEGER8, comm, errcode)
+
+    particles_max_id = MAX(particles_max_id, MAXVAL(nid_all(2,:)))
 
     ! Count number of particles on ranks zero to rank-1
     nid = 0
     DO i = 1, rank
-      nid = nid + nid_all(i)
+      nid = nid + nid_all(1,i)
     END DO
     part_id = particles_max_id + nid
 
     ! Count remaining particles
     DO i = rank+1, nproc
-      nid = nid + nid_all(i)
+      nid = nid + nid_all(1,i)
     END DO
 
     particles_max_id = particles_max_id + nid
@@ -1074,6 +1048,33 @@ CONTAINS
 #endif
 
   END SUBROUTINE generate_particle_ids
+
+
+
+  SUBROUTINE raise_particles_max_id
+
+    ! Raise particles_max_id to at least the largest ID held by any
+    ! particle, so that IDs read from a restart dump or a file are not
+    ! handed out again. Collective.
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+    INTEGER(i8) :: id_max
+    INTEGER :: ispecies
+    TYPE(particle), POINTER :: current
+
+    id_max = particles_max_id
+    DO ispecies = 1, n_species
+      current => species_list(ispecies)%attached_list%head
+      DO WHILE(ASSOCIATED(current))
+        id_max = MAX(id_max, INT(current%id, i8))
+        current => current%next
+      END DO
+    END DO
+
+    CALL MPI_ALLREDUCE(id_max, particles_max_id, 1, MPI_INTEGER8, &
+        MPI_MAX, comm, errcode)
+#endif
+
+  END SUBROUTINE raise_particles_max_id
 
 
 
