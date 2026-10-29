@@ -38,6 +38,10 @@ MODULE deck_species_block
   LOGICAL :: got_name
   INTEGER :: check_block = c_err_none
   LOGICAL, DIMENSION(:), POINTER :: species_charge_set
+  ! Whether a block gave "charge"/"mass" explicitly (first pass),
+  ! kept for the second pass, where "identify" may replace them
+  LOGICAL :: species_charge_given, species_mass_given
+  LOGICAL, DIMENSION(:), POINTER :: charge_given, mass_given
   INTEGER, DIMENSION(:), POINTER :: species_ionise_limit 
   LOGICAL, DIMENSION(:), POINTER :: species_can_ionise
   LOGICAL, DIMENSION(:), POINTER :: species_can_recombine 
@@ -85,6 +89,7 @@ CONTAINS
       ALLOCATE(ionisation_energies(4))
       ALLOCATE(mass(4))
       ALLOCATE(charge(4))
+      ALLOCATE(charge_given(4), mass_given(4))
       ALLOCATE(atomic_number(4))
       ALLOCATE(principle(4))
       ALLOCATE(angular(4))
@@ -235,6 +240,7 @@ CONTAINS
       END DO
     ELSE
       DEALLOCATE(species_charge_set)
+      DEALLOCATE(charge_given, mass_given)
       DEALLOCATE(species_blocks)
 
       ! Sanity check
@@ -398,6 +404,8 @@ CONTAINS
     unique_electrons = .FALSE.
     n_secondary_species_in_block = 0
     n_secondary_limit = 200  ! 200 allows all ionisations from any table element
+    species_charge_given = .FALSE.
+    species_mass_given = .FALSE.
     current_block = current_block + 1
     got_name = .FALSE.
     species_dumpmask = c_io_always
@@ -443,6 +451,8 @@ CONTAINS
       block_species_id = n_species
       charge(n_species) = species_charge
       mass(n_species) = species_mass
+      charge_given(n_species) = species_charge_given
+      mass_given(n_species) = species_mass_given
       atomic_number(n_species) = species_atomic_number
       species_can_ionise(n_species) = use_ionise
       species_can_recombine(n_species) = use_recombine
@@ -466,6 +476,7 @@ CONTAINS
     CHARACTER(*), INTENT(IN) :: element, value
     INTEGER :: errcode
     REAL(num) :: dmin, mult
+    REAL(num) :: deck_charge, deck_mass
     REAL(num), TARGET :: dummy(1,1,1)
     REAL(num), POINTER :: array(:,:,:)
     CHARACTER(LEN=string_length) :: filename, mult_string
@@ -551,10 +562,12 @@ CONTAINS
 
     IF (str_cmp(element, 'mass')) THEN
       species_mass = as_real_print(value, element, errcode) * m0
+      species_mass_given = .TRUE.
     END IF
 
     IF (str_cmp(element, 'charge')) THEN
       species_charge = as_real_print(value, element, errcode) * q0
+      species_charge_given = .TRUE.
     END IF
 
     IF (str_cmp(element, 'atomic_no') &
@@ -658,7 +671,10 @@ CONTAINS
     ! but currently only used in photon production
     ! *************************************************************
     IF (str_cmp(element, 'identify')) THEN
+      deck_charge = species_list(species_id)%charge
+      deck_mass = species_list(species_id)%mass
       CALL identify_species(value, errcode)
+      CALL warn_identify_override(value, deck_charge, deck_mass)
       RETURN
     END IF
 
@@ -1348,6 +1364,8 @@ CONTAINS
     CALL grow_array(release_species, n_species)
     CALL grow_array(mass, n_species)
     CALL grow_array(charge, n_species)
+    CALL grow_array(charge_given, n_species)
+    CALL grow_array(mass_given, n_species)
     CALL grow_array(atomic_number, n_species)
     CALL grow_array(ionisation_energies, n_species)
     CALL grow_array(principle, n_species)
@@ -2481,6 +2499,51 @@ CONTAINS
     errcode = IOR(errcode, c_err_bad_value)
 
   END SUBROUTINE identify_species
+
+
+
+  SUBROUTINE warn_identify_override(value, deck_charge, deck_mass)
+
+    ! "identify" runs on the second deck pass, after species_list holds the
+    ! first-pass "charge" and "mass", so it replaces them whatever their
+    ! order in the block (since v4.19.2; earlier, the last element won).
+    ! Warn when it changes a value the block gave explicitly: e.g.
+    ! "identify:proton" with "charge = 6" gives a proton. The run goes on.
+    CHARACTER(*), INTENT(IN) :: value
+    REAL(num), INTENT(IN) :: deck_charge, deck_mass
+    REAL(num) :: new_charge, new_mass
+    LOGICAL :: charge_changed, mass_changed
+    INTEGER :: io, iu
+
+    new_charge = species_list(species_id)%charge
+    new_mass = species_list(species_id)%mass
+    charge_changed = charge_given(species_id) &
+        .AND. ABS(new_charge - deck_charge) &
+        > 1.0e-10_num * MAX(ABS(new_charge), ABS(deck_charge))
+    mass_changed = mass_given(species_id) &
+        .AND. ABS(new_mass - deck_mass) &
+        > 1.0e-10_num * MAX(ABS(new_mass), ABS(deck_mass))
+
+    IF (.NOT. (charge_changed .OR. mass_changed)) RETURN
+    IF (rank /= 0) RETURN
+
+    DO iu = 1, nio_units ! Print to stdout and to file
+      io = io_units(iu)
+      WRITE(io,*) ''
+      WRITE(io,*) '*** WARNING ***'
+      WRITE(io,*) 'Input deck line number ', TRIM(deck_line_number)
+      WRITE(io,*) '"identify:' // TRIM(value) // '" in species "' &
+          // TRIM(species_list(species_id)%name) // '" replaces the'
+      WRITE(io,*) 'block''s "charge"/"mass", whatever their order:'
+      IF (charge_changed) WRITE(io,'(A,F0.4,A,F0.4)') &
+          '   charge (e):   ', deck_charge / q0, ' -> ', new_charge / q0
+      IF (mass_changed) WRITE(io,'(A,F0.4,A,F0.4)') &
+          '   mass (m_e):   ', deck_mass / m0, ' -> ', new_mass / m0
+      WRITE(io,*) 'Remove "identify" to keep the deck values.'
+      WRITE(io,*) ''
+    END DO
+
+  END SUBROUTINE warn_identify_override
 
 
 
