@@ -191,6 +191,11 @@ CONTAINS
     use_xy_angle = .FALSE.
     use_yz_angle = .FALSE.
     use_zx_angle = .FALSE.
+    ! Upper limit used to wrap angles into a requested range. The default of
+    ! pi leaves angles in (-pi,pi] when the angle is only a restriction.
+    xy_max = pi
+    yz_max = pi
+    zx_max = pi
 
     current_data = 0.0_num
 #ifndef PER_PARTICLE_CHARGE_MASS
@@ -344,6 +349,12 @@ CONTAINS
 
       END IF
     END DO
+
+    ! Angles used only in a restriction must still be calculated, otherwise
+    ! the restriction is tested against uninitialised data
+    IF (use_restrictions(c_dir_xy_angle)) use_xy_angle = .TRUE.
+    IF (use_restrictions(c_dir_yz_angle)) use_yz_angle = .TRUE.
+    IF (use_restrictions(c_dir_zx_angle)) use_zx_angle = .TRUE.
 
     ! Calculate range for directions where needed
     IF (calc_ranges) THEN
