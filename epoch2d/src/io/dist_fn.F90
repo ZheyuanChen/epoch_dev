@@ -575,6 +575,9 @@ CONTAINS
         IF (ABS(tmpvar) > REAL(HUGE(1),num)) &
             CYCLE out2
         cell(idim) = FLOOR(tmpvar) + 1
+        ! Include data lying exactly on the upper limit in the last cell.
+        IF (cell(idim) == resolution(idim) + 1 &
+            .AND. current_data <= ranges(2,idim)) cell(idim) = resolution(idim)
         IF (cell(idim) < 1 .OR. cell(idim) > resolution(idim)) &
             CYCLE out2
       END DO
