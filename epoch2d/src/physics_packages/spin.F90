@@ -1317,6 +1317,48 @@ CONTAINS
   END FUNCTION pol_obs_to_stored
 
 
+
+  SUBROUTINE photon_cm_axes(p_photon, beta_b, gamma_b, n_cm, r1, r2)
+
+    ! Reference axes of a photon's stored Stokes vector (reference_axis
+    ! on its lab direction) carried to the frame that moves with
+    ! velocity beta_b c (Lorentz factor gamma_b), where the photon moves
+    ! along the unit vector n_cm. Used for linear Breit-Wheeler in the
+    ! centre-of-momentum frame. The axis r, as the polarisation
+    ! 4-vector (0, r), is boosted and then shifted along the photon
+    ! 4-momentum back to a zero time component (gauge invariance):
+    !   r' = r + gamma_b^2 / (gamma_b + 1) (beta_b . r) beta_b
+    !          + gamma_b (beta_b . r) n_cm.
+    ! This includes the rotation of the polarisation by the boost; a
+    ! projection of r onto the plane normal to n_cm does not. The
+    ! amplitude is Lorentz invariant, so the Stokes vector has the same
+    ! components on (r1', r2') as on the lab axes. r1' is
+    ! re-orthonormalised against round-off and r2' = n_cm x r1', so
+    ! (r1', r2', n_cm) is right-handed. beta_b = 0 gives the lab axes.
+    REAL(num), INTENT(IN) :: p_photon(3), beta_b(3), gamma_b, n_cm(3)
+    REAL(num), INTENT(OUT) :: r1(3), r2(3)
+    REAL(num) :: n(3), a1(3), a2(3), scale, br
+
+    r1 = 0.0_num
+    r2 = 0.0_num
+    ! Scaling avoids squaring the very small SI photon momenta
+    scale = MAXVAL(ABS(p_photon))
+    IF (scale <= TINY(1.0_num)) RETURN
+    n = p_photon / scale
+    n = n / SQRT(DOT_PRODUCT(n, n))
+    CALL reference_axis(n, a1, a2)
+
+    br = DOT_PRODUCT(beta_b, a1)
+    r1 = a1 + gamma_b * br * (gamma_b / (gamma_b + 1.0_num) * beta_b + n_cm)
+    r1 = r1 - DOT_PRODUCT(r1, n_cm) * n_cm
+    r1 = r1 / SQRT(DOT_PRODUCT(r1, r1))
+    r2 = (/ n_cm(2)*r1(3) - n_cm(3)*r1(2), &
+            n_cm(3)*r1(1) - n_cm(1)*r1(3), &
+            n_cm(1)*r1(2) - n_cm(2)*r1(1) /)
+
+  END SUBROUTINE photon_cm_axes
+
+
   SUBROUTINE nlcs_final_states(ux, uy, uz, gamma_rel, e_field, b_field, &
       charge, lam, eta, want_photon, spin, xi_stored)
 

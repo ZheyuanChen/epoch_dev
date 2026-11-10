@@ -684,6 +684,22 @@ MODULE shared_data
   REAL(num) :: LBW_amp_factor = 1.0_num
   INTEGER :: lbw_electron_species = -1
   INTEGER :: lbw_positron_species = -1
+  ! Polarisation-resolved linear Breit-Wheeler (qed block,
+  ! needs -DSPIN): the cross-section, the pair angles and the pair
+  ! spins depend on both photons' Stokes vectors.
+  ! Switches for tests, one for each part (all default T, all need
+  ! LBW_polarisation = T):
+  ! LBW_pol_cross_section = F: collisions at the unpolarised
+  !   cross-section (and so no survivor update);
+  ! LBW_pol_angles = F: unpolarised pair angles;
+  ! LBW_pair_spin = F: the new leptons are unpolarised (spin 0);
+  ! LBW_survivor_update = F: a photon that loses only part of its
+  !   weight in a collision keeps its Stokes vector.
+  LOGICAL :: LBW_polarisation = .FALSE.
+  LOGICAL :: LBW_survivor_update = .TRUE.
+  LOGICAL :: LBW_pol_cross_section = .TRUE.
+  LOGICAL :: LBW_pol_angles = .TRUE.
+  LOGICAL :: LBW_pair_spin = .TRUE.
   REAL(num), PARAMETER :: tolerance_cdf       = 1.0e-6_num
   REAL(num), PARAMETER :: tolerance_cos_angle = 1.0e-6_num
 #ifdef SPIN

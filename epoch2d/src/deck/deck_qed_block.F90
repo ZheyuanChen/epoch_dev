@@ -50,6 +50,11 @@ CONTAINS
       use_LBW = .FALSE.
       use_LBW_diff = .TRUE.
       LBW_amp_factor = 1.0_num
+      LBW_polarisation = .FALSE.
+      LBW_survivor_update = .TRUE.
+      LBW_pol_cross_section = .TRUE.
+      LBW_pol_angles = .TRUE.
+      LBW_pair_spin = .TRUE.
       use_full_landau_lifshitz = .FALSE.
       ll_gradient_term = .TRUE.
       ll_quadratic_term = .TRUE.
@@ -146,6 +151,37 @@ CONTAINS
 #endif
 
     IF (use_qed) need_random_state = .TRUE.
+
+    ! LBW is set up with the rest of QED (setup_qed_module); without
+    ! use_qed it would silently do nothing
+    IF (use_LBW .AND. .NOT. use_qed) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** WARNING ***'
+          WRITE(io,*) 'linear_breit_wheeler=T has no effect without ', &
+              'use_qed=T. Linear Breit-Wheeler is switched off.'
+        END DO
+      END IF
+      use_LBW = .FALSE.
+    END IF
+
+#ifndef SPIN
+    ! Photon Stokes vectors exist only with -DSPIN
+    IF (LBW_polarisation) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'Unable to set "LBW_polarisation=T" in the ', &
+              '"qed" block.'
+          WRITE(io,*) 'Please recompile with the -DSPIN preprocessor flag.'
+        END DO
+      END IF
+      CALL abort_code(c_err_pp_options_missing)
+    END IF
+#endif
 
     use_binary_collisions = use_LBW
 
@@ -332,6 +368,38 @@ CONTAINS
 
     IF (str_cmp(element, 'amplify_LBW_factor')) THEN
       LBW_amp_factor = as_real_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! LBW cross-section and pair angles from both photons' Stokes
+    ! vectors
+    IF (str_cmp(element, 'LBW_polarisation') &
+        .OR. str_cmp(element, 'LBW_polarization')) THEN
+      LBW_polarisation = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Test switch: no Stokes update of partly consumed macro-photons
+    IF (str_cmp(element, 'LBW_survivor_update')) THEN
+      LBW_survivor_update = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Test switches for the other parts of polarised LBW: collisions at
+    ! the unpolarised cross-section, unpolarised pair angles,
+    ! unpolarised pairs
+    IF (str_cmp(element, 'LBW_pol_cross_section')) THEN
+      LBW_pol_cross_section = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'LBW_pol_angles')) THEN
+      LBW_pol_angles = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'LBW_pair_spin')) THEN
+      LBW_pair_spin = as_logical_print(value, element, errcode)
       RETURN
     END IF
 
@@ -538,6 +606,64 @@ CONTAINS
         END DO
       END IF
     END IF
+
+    IF (LBW_polarisation .AND. .NOT. use_LBW) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'LBW_polarisation=T needs linear_breit_wheeler=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+    IF (.NOT. LBW_survivor_update .AND. .NOT. LBW_polarisation) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'LBW_survivor_update needs LBW_polarisation=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+    IF (.NOT. LBW_polarisation .AND. (.NOT. LBW_pol_cross_section &
+        .OR. .NOT. LBW_pol_angles .OR. .NOT. LBW_pair_spin)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'LBW_pol_cross_section, LBW_pol_angles and ', &
+              'LBW_pair_spin need LBW_polarisation=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+#ifdef SPIN
+    ! photon_polarisation = F treats every photon as unpolarised, in
+    ! linear Breit-Wheeler too
+    IF (LBW_polarisation .AND. .NOT. photon_polarisation) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** WARNING ***'
+          WRITE(io,*) 'LBW_polarisation=T has no effect with ', &
+              'photon_polarisation=F. Linear Breit-Wheeler is unpolarised.'
+        END DO
+      END IF
+      LBW_polarisation = .FALSE.
+    END IF
+#endif
 
 #ifdef SPIN
     ! Continuous emission has no discrete events to resolve spin with

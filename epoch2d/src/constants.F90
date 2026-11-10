@@ -289,6 +289,11 @@ MODULE constants
       * (q0 / c)**2
   REAL(num), PARAMETER :: sigma_lBW_max = pi * classical_re**2 * &
           0.6817055055017870382984600045421994441648264608312_num
+  ! Largest polarised linear Breit-Wheeler cross-section:
+  ! the maximum over C of sigma_0 + max(|sigma_L|,
+  ! |sigma_C|), reached by photons of equal helicity at C = 1.2645
+  REAL(num), PARAMETER :: sigma_lBW_pol_max = pi * classical_re**2 * &
+          0.90906044189278891464_num
   REAL(num), PARAMETER :: inv_c = 1.0_num / c
   REAL(num), PARAMETER :: inv_mc0_sq = 1.0_num / mc0 / mc0
   REAL(num), PARAMETER :: half_pire2 = 0.5_num * pi * classical_re**2

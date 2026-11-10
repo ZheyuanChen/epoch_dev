@@ -25,6 +25,25 @@ MODULE photons
   REAL(num), PRIVATE :: sig2cdt_dV_lbw
   REAL(num), PRIVATE :: cdt_dV
   REAL(num), PRIVATE :: i_LBW_amp_factor
+#ifdef SPIN
+  ! For Linear Breit-Wheeler usage.
+  ! A candidate pair of photons i, j.
+  ! In their centre-of-momentum (CM) frame photon i moves along axis q
+  ! and photon j along -q; t1, t2 are the transverse axes of
+  ! get_orthonormal, from which the pair azimuth is measured. Collision
+  ! axes: (t1, t2, q) for photon i, (t1, -t2, -q) for photon j, both
+  ! right-handed. ri1, ri2 (rj1, rj2) are the reference axes of the
+  ! stored Stokes vector of i (j) in the CM frame (photon_cm_axes) and
+  ! xi_i, xi_j the Stokes vectors on the collision axes. sig_0, sig_l,
+  ! sig_c and sig_pol are sigma_0, sigma_L, sigma_C and the polarised
+  ! cross-section. polarised = .FALSE. when both Stokes vectors are
+  ! zero; then only sig_pol (= sigma_0) is set.
+  TYPE lbw_pol_pair
+    LOGICAL :: polarised
+    REAL(num), DIMENSION(3) :: q, t1, t2, ri1, ri2, rj1, rj2, xi_i, xi_j
+    REAL(num) :: sig_0, sig_l, sig_c, sig_pol
+  END TYPE lbw_pol_pair
+#endif
   SAVE
   REAL(num) :: part_pos_global, gamma_global, eta_global
 
@@ -72,8 +91,14 @@ CONTAINS
       END DO
     END IF
 
-    sig2cdt_dV_lbw = 2.0_num * sigma_lBW_max * c * dt / dx / dy &
-        * LBW_amp_factor
+    ! The polarised cross-section has a larger maximum
+    IF (LBW_polarisation) THEN
+      sig2cdt_dV_lbw = 2.0_num * sigma_lBW_pol_max * c * dt / dx / dy &
+          * LBW_amp_factor
+    ELSE
+      sig2cdt_dV_lbw = 2.0_num * sigma_lBW_max * c * dt / dx / dy &
+          * LBW_amp_factor
+    END IF
     cdt_dV = c * dt / dx / dy * LBW_amp_factor
     i_LBW_amp_factor = 1.0_num / LBW_amp_factor
 
@@ -98,6 +123,13 @@ CONTAINS
     check_qed_variables = c_err_none
 
     IF (.NOT.use_qed) RETURN
+
+    ! Linear Breit-Wheeler needs its pair species, with or without
+    ! photon emission
+    IF (use_LBW) THEN
+      check_qed_variables = check_lbw_species()
+      IF (check_qed_variables /= c_err_none) RETURN
+    END IF
 
     ! If you're only doing radiation reaction force then don't need any special
     ! species, so don't do any checking here
@@ -220,6 +252,75 @@ CONTAINS
     END IF
 #endif
   END FUNCTION check_qed_variables
+
+
+
+  FUNCTION check_lbw_species() RESULT(errcode)
+
+    ! Pair species of linear Breit-Wheeler: the first electron and
+    ! positron species unless identify:LBW_electron and
+    ! identify:LBW_positron name them.
+    INTEGER :: errcode
+    INTEGER :: io, iu, ispecies
+    INTEGER :: first_electron, first_positron
+
+    errcode = c_err_none
+    first_electron = -1
+    first_positron = -1
+    DO ispecies = 1, n_species
+      IF (species_list(ispecies)%species_type == c_species_id_electron &
+          .AND. first_electron == -1) THEN
+        first_electron = ispecies
+      ELSE IF (species_list(ispecies)%species_type &
+          == c_species_id_positron .AND. first_positron == -1) THEN
+        first_positron = ispecies
+      END IF
+    END DO
+
+    IF ((lbw_electron_species < 0 .AND. first_electron < 0) &
+        .OR. (lbw_positron_species < 0 .AND. first_positron < 0)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'linear_breit_wheeler=T needs an electron and a ', &
+              'positron species. Specify using "identify:LBW_electron" ', &
+              'and "identify:LBW_positron".'
+        END DO
+      END IF
+      errcode = c_err_missing_elements
+      RETURN
+    END IF
+
+    IF (lbw_electron_species < 0) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** WARNING ***'
+          WRITE(io,*) 'No linear Breit-Wheeler electron species specified.'
+          WRITE(io,*) 'Specify using "identify:LBW_electron".'
+          WRITE(io,*) 'Using species ', &
+              TRIM(species_list(first_electron)%name), ' instead.'
+        END DO
+      END IF
+      lbw_electron_species = first_electron
+    END IF
+
+    IF (lbw_positron_species < 0) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** WARNING ***'
+          WRITE(io,*) 'No linear Breit-Wheeler positron species specified.'
+          WRITE(io,*) 'Specify using "identify:LBW_positron".'
+          WRITE(io,*) 'Using species ', &
+              TRIM(species_list(first_positron)%name), ' instead.'
+        END DO
+      END IF
+      lbw_positron_species = first_positron
+    END IF
+
+  END FUNCTION check_lbw_species
 
 
 
@@ -2265,7 +2366,10 @@ CONTAINS
     REAL(num), DIMENSION(3) :: moment_i, moment_j
     REAL(num) :: pi_abs, pj_abs, pipj, pipj_cos, kappa, en_com2
     REAL(num) :: weight_i, weight_j
-    REAL(num) :: com_beta, sigma_lbw, P_coll
+    REAL(num) :: com_beta, sigma_lbw, sigma_coll, P_coll, bv2
+#ifdef SPIN
+    TYPE(lbw_pol_pair) :: pol
+#endif
     REAL(num) :: Y_ij
     REAL(num), DIMENSION(2) :: lepton_pos
     REAL(num), DIMENSION(3) :: beta_v, n_v, p_phot_com
@@ -2330,9 +2434,6 @@ CONTAINS
       ! |p_i|*|p_j|*(1-cos(theta))
       pipj_cos = pipj - DOT_PRODUCT(moment_i,moment_j)
 
-      ! kinematic factor (1-cos(theta))
-      kappa = pipj_cos / pipj
-
       ! dimensionless photon energy squared in c.o.m.
       en_com2 = pipj_cos * 0.5_num * inv_mc0_sq
 
@@ -2342,6 +2443,10 @@ CONTAINS
         N_scattered = N_scattered +1
         CYCLE
       END IF
+
+      ! kinematic factor (1-cos(theta)), after the threshold test,
+      ! which skips photons of zero energy (pipj = 0)
+      kappa = pipj_cos / pipj
 
       !!! calculate collisional probability P_ij/P_max
       weight_i = current_i%weight
@@ -2354,9 +2459,21 @@ CONTAINS
       ! Notice this is a Lorentz invariant.
       ! Later we will re-use it in the c.o.m frame.
       sigma_lbw = lbw_cross_sec(com_beta)
+      sigma_coll = sigma_lbw
+#ifdef SPIN
+      ! LBW_polarisation: the cross-section of the two Stokes vectors
+      ! (pol is used again for the pair angles, the pair spins and the
+      ! survivors). LBW_pol_cross_section = F (test switch) keeps the
+      ! unpolarised cross-section.
+      IF (LBW_polarisation) THEN
+        CALL lbw_pol_setup(moment_i, moment_j, pi_abs, pj_abs, &
+            current_i%spin, current_j%spin, com_beta, sigma_lbw, pol)
+        IF (LBW_pol_cross_section) sigma_coll = pol%sig_pol
+      END IF
+#endif
 
       ! collisional probability after modification by P_max
-      P_coll = sigma_lbw * cdt_dV * MAX(weight_i, weight_j) * kappa * i_Pmax
+      P_coll = sigma_coll * cdt_dV * MAX(weight_i, weight_j) * kappa * i_Pmax
 
       IF (random() > P_coll) THEN
         ! These two macro-photons do not collide (due to collisional probability)
@@ -2378,8 +2495,11 @@ CONTAINS
       ! Lorentz transformation velocity vector from lab to c.o.m. (norm. by c)
       beta_v = (moment_i + moment_j) / (pi_abs + pj_abs)
 
-      ! Unit vector of this Lorentz transformation velocity
-      n_v = beta_v /SQRT(DOT_PRODUCT(beta_v, beta_v))
+      ! Unit vector of this Lorentz transformation velocity; there is
+      ! none for opposite momenta of equal size (the lab is the c.o.m.)
+      bv2 = DOT_PRODUCT(beta_v, beta_v)
+      n_v = 0.0_num
+      IF (bv2 > 0.0_num) n_v = beta_v / SQRT(bv2)
 
       ! Gamma factor of this Lorentz transformatin
       gamma_v = 1.0_num/SQRT(1.0_num-DOT_PRODUCT(beta_v,beta_v))
@@ -2388,19 +2508,30 @@ CONTAINS
       p_lep_com_mag = SQRT(en_com2 - 1.0_num)*mc0
 
       IF (use_LBW_diff) THEN
-        ! Random azimuthal angle in c.o.m.
-        rand_phi = 2.0_num * pi * random()
-
-        ! Random polar angle in c.o.m. (cosine of this random angle)
-        cost = random_polar_lbw(com_beta, sigma_lbw)
-        sint = SQRT(1.0_num - cost**2)
-
         ! Photon momentum in c.o.m. (in SI)
         p_phot_com = moment_i + (gamma_v-1.0_num) &
             * DOT_PRODUCT(moment_i,n_v)*n_v - gamma_v*pi_abs*beta_v
 
         ! Orthonormal basis (e1, e2, e3) s.t. e1//photon momentum in c.o.m.
         CALL get_orthonormal(p_phot_com, e1, e2, e3)
+
+        DO
+          ! Random azimuthal angle in c.o.m.
+          rand_phi = 2.0_num * pi * random()
+
+          ! Random polar angle in c.o.m. (cosine of this random angle)
+          cost = random_polar_lbw(com_beta, sigma_lbw)
+#ifdef SPIN
+          ! LBW_polarisation: keep these (unpolarised) angles with the
+          ! ratio of polarised to unpolarised distributions (rejection).
+          ! LBW_pol_angles = F (test switch) keeps the first draw.
+          IF (.NOT. LBW_polarisation .OR. .NOT. LBW_pol_angles) EXIT
+          IF (lbw_pol_keep_angles(pol, com_beta, cost, rand_phi)) EXIT
+#else
+          EXIT
+#endif
+        END DO
+        sint = SQRT(1.0_num - cost**2)
 
         ! Lepton momentum in c.o.m. (in SI)
         p_lep_com = p_lep_com_mag &
@@ -2443,6 +2574,27 @@ CONTAINS
       new_positron%part_p   = p_posi_lab
       new_positron%optical_depth = reset_optical_depth()
       CALL add_particle_to_partlist(lbw_posi_list, new_positron)
+
+#ifdef SPIN
+      ! LBW_pair_spin: spins of the pair at these angles, from both
+      ! Stokes vectors (otherwise unpolarised leptons, spin 0)
+      IF (LBW_polarisation .AND. LBW_pair_spin) THEN
+        CALL lbw_pol_pair_spins(pol, current_i%part_p, &
+            current_j%part_p, pi_abs, pj_abs, com_beta, cost, rand_phi, &
+            new_electron%part_p, new_positron%part_p, &
+            new_electron%spin, new_positron%spin)
+      END IF
+
+      ! LBW_survivor_update: Stokes vectors of the photons left in each
+      ! macro-photon (f = 1, no update, for one that is deleted below).
+      ! With LBW_pol_cross_section = F the photons are absorbed whatever
+      ! their polarisation, so the survivors keep their Stokes vector.
+      IF (LBW_polarisation .AND. LBW_survivor_update &
+          .AND. LBW_pol_cross_section) THEN
+        CALL lbw_pol_survivor(pol, .TRUE., Y_ij / weight_i, current_i%spin)
+        CALL lbw_pol_survivor(pol, .FALSE., Y_ij / weight_j, current_j%spin)
+      END IF
+#endif
 
       ! Annihilate photons
       ! First, store pointers, as photons may be deleted
@@ -2508,7 +2660,10 @@ CONTAINS
     REAL(num), DIMENSION(3) :: moment_i, moment_j
     REAL(num) :: pi_abs, pj_abs, pipj, pipj_cos, kappa, en_com2
     REAL(num) :: weight_i, weight_j
-    REAL(num) :: com_beta, sigma_lbw, P_coll
+    REAL(num) :: com_beta, sigma_lbw, sigma_coll, P_coll, bv2
+#ifdef SPIN
+    TYPE(lbw_pol_pair) :: pol
+#endif
     REAL(num) :: Y_ij
     REAL(num), DIMENSION(2) :: lepton_pos
     REAL(num), DIMENSION(3) :: beta_v, n_v, p_phot_com
@@ -2577,9 +2732,6 @@ CONTAINS
       ! |p_i|*|p_j|*(1-cos(theta))
       pipj_cos = pipj - DOT_PRODUCT(moment_i,moment_j)
 
-      ! kinematic factor (1-cos(theta))
-      kappa = pipj_cos / pipj
-
       ! dimensionless photon energy squared in c.o.m.
       en_com2 = pipj_cos * 0.5_num * inv_mc0_sq
 
@@ -2589,6 +2741,10 @@ CONTAINS
         N_scattered = N_scattered +1
         CYCLE
       END IF
+
+      ! kinematic factor (1-cos(theta)), after the threshold test,
+      ! which skips photons of zero energy (pipj = 0)
+      kappa = pipj_cos / pipj
 
       !!! calculate collisional probability P_ij/P_max
       weight_i = current_i%weight
@@ -2601,9 +2757,21 @@ CONTAINS
       ! Notice this is a Lorentz invariant.
       ! Later we will re-use it in the c.o.m frame.
       sigma_lbw = lbw_cross_sec(com_beta)
+      sigma_coll = sigma_lbw
+#ifdef SPIN
+      ! LBW_polarisation: the cross-section of the two Stokes vectors
+      ! (pol is used again for the pair angles, the pair spins and the
+      ! survivors). LBW_pol_cross_section = F (test switch) keeps the
+      ! unpolarised cross-section.
+      IF (LBW_polarisation) THEN
+        CALL lbw_pol_setup(moment_i, moment_j, pi_abs, pj_abs, &
+            current_i%spin, current_j%spin, com_beta, sigma_lbw, pol)
+        IF (LBW_pol_cross_section) sigma_coll = pol%sig_pol
+      END IF
+#endif
 
       ! collisional probability after modification by P_max
-      P_coll = sigma_lbw * cdt_dV * MAX(weight_i, weight_j) * kappa * i_Pmax
+      P_coll = sigma_coll * cdt_dV * MAX(weight_i, weight_j) * kappa * i_Pmax
 
       IF (random() > P_coll) THEN
         ! These two macro-photons do not collide (due to collisional probability)
@@ -2625,8 +2793,11 @@ CONTAINS
       ! Lorentz transformation velocity vector from lab to c.o.m. (norm. by c)
       beta_v = (moment_i + moment_j) / (pi_abs + pj_abs)
 
-      ! Unit vector of this Lorentz transformation velocity
-      n_v = beta_v /SQRT(DOT_PRODUCT(beta_v, beta_v))
+      ! Unit vector of this Lorentz transformation velocity; there is
+      ! none for opposite momenta of equal size (the lab is the c.o.m.)
+      bv2 = DOT_PRODUCT(beta_v, beta_v)
+      n_v = 0.0_num
+      IF (bv2 > 0.0_num) n_v = beta_v / SQRT(bv2)
 
       ! Gamma factor of this Lorentz transformatin
       gamma_v = 1.0_num/SQRT(1.0_num-DOT_PRODUCT(beta_v,beta_v))
@@ -2635,19 +2806,30 @@ CONTAINS
       p_lep_com_mag = SQRT(en_com2 - 1.0_num)*mc0
 
       IF (use_LBW_diff) THEN
-        ! Random azimuthal angle in c.o.m.
-        rand_phi = 2.0_num * pi * random()
-
-        ! Random polar angle in c.o.m. (cosine of this random angle)
-        cost = random_polar_lbw(com_beta, sigma_lbw)
-        sint = SQRT(1.0_num - cost**2)
-
         ! Photon momentum in c.o.m. (in SI)
         p_phot_com = moment_i + (gamma_v-1.0_num) &
             * DOT_PRODUCT(moment_i,n_v)*n_v - gamma_v*pi_abs*beta_v
 
         ! Orthonormal basis (e1, e2, e3) s.t. e1//photon momentum in c.o.m.
         CALL get_orthonormal(p_phot_com, e1, e2, e3)
+
+        DO
+          ! Random azimuthal angle in c.o.m.
+          rand_phi = 2.0_num * pi * random()
+
+          ! Random polar angle in c.o.m. (cosine of this random angle)
+          cost = random_polar_lbw(com_beta, sigma_lbw)
+#ifdef SPIN
+          ! LBW_polarisation: keep these (unpolarised) angles with the
+          ! ratio of polarised to unpolarised distributions (rejection).
+          ! LBW_pol_angles = F (test switch) keeps the first draw.
+          IF (.NOT. LBW_polarisation .OR. .NOT. LBW_pol_angles) EXIT
+          IF (lbw_pol_keep_angles(pol, com_beta, cost, rand_phi)) EXIT
+#else
+          EXIT
+#endif
+        END DO
+        sint = SQRT(1.0_num - cost**2)
 
         ! Lepton momentum in c.o.m. (in SI)
         p_lep_com = p_lep_com_mag &
@@ -2690,6 +2872,27 @@ CONTAINS
       new_positron%part_p   = p_posi_lab
       new_positron%optical_depth = reset_optical_depth()
       CALL add_particle_to_partlist(lbw_posi_list, new_positron)
+
+#ifdef SPIN
+      ! LBW_pair_spin: spins of the pair at these angles, from both
+      ! Stokes vectors (otherwise unpolarised leptons, spin 0)
+      IF (LBW_polarisation .AND. LBW_pair_spin) THEN
+        CALL lbw_pol_pair_spins(pol, current_i%part_p, &
+            current_j%part_p, pi_abs, pj_abs, com_beta, cost, rand_phi, &
+            new_electron%part_p, new_positron%part_p, &
+            new_electron%spin, new_positron%spin)
+      END IF
+
+      ! LBW_survivor_update: Stokes vectors of the photons left in each
+      ! macro-photon (f = 1, no update, for one that is deleted below).
+      ! With LBW_pol_cross_section = F the photons are absorbed whatever
+      ! their polarisation, so the survivors keep their Stokes vector.
+      IF (LBW_polarisation .AND. LBW_survivor_update &
+          .AND. LBW_pol_cross_section) THEN
+        CALL lbw_pol_survivor(pol, .TRUE., Y_ij / weight_i, current_i%spin)
+        CALL lbw_pol_survivor(pol, .FALSE., Y_ij / weight_j, current_j%spin)
+      END IF
+#endif
 
       ! Annihilate photons
       ! First, store pointers, as photons may be deleted
@@ -2870,5 +3073,521 @@ CONTAINS
     lbw_polar_cdf_err = - quarter_pire2 * temp * big_bracket / sig - rnd
 
   END FUNCTION lbw_polar_cdf_err
+
+
+
+#ifdef SPIN
+  SUBROUTINE lbw_pol_setup(p_i, p_j, pabs_i, pabs_j, spin_i, spin_j, ze, &
+      sigma0, pol)
+
+    ! LBW_polarisation: the cross-section of a candidate pair of photons
+    ! (lab momenta p_i, p_j of size pabs_i, pabs_j; stored Stokes
+    ! vectors spin_i, spin_j) and the frame of lbw_pol_pair, with the
+    ! boost of the collision routines. ze is the lepton velocity in the
+    ! CM frame and sigma0 = lbw_cross_sec(ze). With xi_i, xi_j on the
+    ! collision axes, the pair spins summed,
+    !   sigma = sigma_0 + sigma_L (xi_i1 xi_j1 - xi_i3 xi_j3)
+    !         + sigma_C xi_i2 xi_j2,
+    !   sigma_L = -(pi r_e^2 / 2) (1 - ze^2)^2 (ze + Theta (1 - ze^2)),
+    !   sigma_C = pi r_e^2 (1 - ze^2) (3 ze - 2 Theta),
+    ! where 1 - ze^2 = 1 / C^2 and Theta = atanh(ze). Photons linearly
+    ! polarised along one axis give sigma_0 + sigma_L, along
+    ! perpendicular axes sigma_0 - sigma_L; equal helicities give
+    ! sigma_0 + sigma_C, opposite ones sigma_0 - sigma_C (Breit and
+    ! Wheeler, Phys. Rev. 46, 1087 (1934); Zhao et al., Phys. Rev. D
+    ! 107, 096013 (2023)). sigma does not depend on the choice of t1.
+    REAL(num), INTENT(IN) :: p_i(3), p_j(3), pabs_i, pabs_j
+    REAL(num), INTENT(IN) :: spin_i(3), spin_j(3), ze, sigma0
+    TYPE(lbw_pol_pair), INTENT(OUT) :: pol
+    REAL(num) :: beta_v(3), n_v(3), p_com(3), bv2, gamma_v, ic2, theta
+
+    pol%polarised = MAXVAL(ABS(spin_i)) > 0.0_num &
+        .OR. MAXVAL(ABS(spin_j)) > 0.0_num
+    pol%sig_pol = sigma0
+    IF (.NOT. pol%polarised) RETURN
+
+    ! Boost to the CM frame (none for opposite momenta of equal size)
+    ! and photon i's direction there
+    beta_v = (p_i + p_j) / (pabs_i + pabs_j)
+    bv2 = DOT_PRODUCT(beta_v, beta_v)
+    n_v = 0.0_num
+    IF (bv2 > 0.0_num) n_v = beta_v / SQRT(bv2)
+    gamma_v = 1.0_num / SQRT(1.0_num - bv2)
+    p_com = p_i + (gamma_v - 1.0_num) * DOT_PRODUCT(p_i, n_v) * n_v &
+        - gamma_v * pabs_i * beta_v
+    CALL get_orthonormal(p_com, pol%q, pol%t1, pol%t2)
+
+    ! The stored Stokes vectors on the collision axes
+    CALL photon_cm_axes(p_i, beta_v, gamma_v, pol%q, pol%ri1, pol%ri2)
+    CALL photon_cm_axes(p_j, beta_v, gamma_v, -pol%q, pol%rj1, pol%rj2)
+    pol%xi_i = pol_stored_to_obs(pol%ri1, pol%ri2, pol%t1, spin_i)
+    pol%xi_j = pol_stored_to_obs(pol%rj1, pol%rj2, pol%t1, spin_j)
+
+    ic2 = 1.0_num - ze**2
+    theta = 0.5_num * LOG((1.0_num + ze) / (1.0_num - ze))
+    pol%sig_0 = sigma0
+    pol%sig_l = -half_pire2 * ic2**2 * (ze + theta * ic2)
+    pol%sig_c = 2.0_num * half_pire2 * ic2 &
+        * (3.0_num * ze - 2.0_num * theta)
+    pol%sig_pol = sigma0 + pol%sig_l * (pol%xi_i(1) * pol%xi_j(1) &
+        - pol%xi_i(3) * pol%xi_j(3)) + pol%sig_c * pol%xi_i(2) * pol%xi_j(2)
+    ! sigma >= 0; this only removes round-off near the threshold
+    pol%sig_pol = MAX(pol%sig_pol, 0.0_num)
+
+  END SUBROUTINE lbw_pol_setup
+
+
+
+  SUBROUTINE lbw_pol_kernel(ze, mu, xa, xb, b0, b)
+
+    ! Angular distribution of the LBW pair in the CM frame, summed over
+    ! the pair spins, for the electron at cos(theta) = mu from photon i.
+    ! xa, xb: the Stokes vectors of photons i and j on the
+    ! scattering-plane axes (u, q x u, q) and (u, -q x u, -q), where u
+    ! is the direction of the electron normal to q. Then
+    !   d sigma / d Omega = r_e^2 ze / (8 C^2) b,
+    !   b = K00 + K10 (xa1 + xb1) + K11 xa1 xb1 + K33 xa3 xb3
+    !     + K22 xa2 xb2,
+    ! with s = 1 - mu^2, D = 1 - ze^2 mu^2, g = 2 ze^2 s / D,
+    !   K00 = 2 (1 + ze^2 mu^2) / D + 1 - (1 - g)^2,
+    !   K10 = g (2 - g),  K11 = -1 - (1 - g)^2,  K33 = 2 (1 - g),
+    !   K22 = 2 (1 - ze^4 - ze^2 s (2 - ze^2 s)) / D^2.
+    ! b0 = K00 is the unpolarised distribution of random_polar_lbw. The
+    ! linear terms are the polarised Klein-Nishina result crossed to
+    ! pair production, K22 follows from the helicity cross-sections;
+    ! all agree with direct Dirac traces (tests/spin/lbw_polarisation).
+    ! The other Stokes products vanish (parity; real tree amplitudes).
+    ! Over all angles K10 drops out, K11 - K33 integrates to 2 sigma_L
+    ! and K22 to sigma_C (lbw_pol_setup).
+    REAL(num), INTENT(IN) :: ze, mu, xa(3), xb(3)
+    REAL(num), INTENT(OUT) :: b0, b
+    REAL(num) :: z2, s, d, g, h
+
+    z2 = ze**2
+    s = 1.0_num - mu**2
+    d = 1.0_num - z2 * mu**2
+    g = 2.0_num * z2 * s / d
+    h = (1.0_num - g)**2
+    b0 = 2.0_num * (1.0_num + z2 * mu**2) / d + 1.0_num - h
+    b = b0 + g * (2.0_num - g) * (xa(1) + xb(1)) &
+        - (1.0_num + h) * xa(1) * xb(1) &
+        + 2.0_num * (1.0_num - g) * xa(3) * xb(3) &
+        + 2.0_num * (1.0_num - z2**2 - z2 * s * (2.0_num - z2 * s)) &
+        / d**2 * xa(2) * xb(2)
+
+  END SUBROUTINE lbw_pol_kernel
+
+
+
+  FUNCTION lbw_pol_keep_angles(pol, ze, mu, phi) RESULT(keep)
+
+    ! Rejection step of the polarised pair angles (LBW_polarisation):
+    ! mu and the azimuth phi (from t1 towards t2) were drawn from the
+    ! unpolarised distribution; keep them with probability
+    ! b / (env b0) (lbw_pol_kernel), env = (1 + |xi_i|) (1 + |xi_j|).
+    ! env bounds b / b0 everywhere: each photon's density matrix is at
+    ! most (1 + |xi|) times the unpolarised one, and the reaction
+    ! operator is positive. The mean number of draws is
+    ! env sigma_0 / sigma. Unpolarised pairs are kept without a random
+    ! number.
+    ! KNOWN (review, 4 November 2026; section 13 of the report): the
+    ! caller's loop has no bound; near threshold a pure pair needs
+    ! about 1.2 / ze^2 draws (parallel linear) or 1.5 / ze^2 (opposite
+    ! helicities), though at most 3 per candidate test on average.
+    TYPE(lbw_pol_pair), INTENT(IN) :: pol
+    REAL(num), INTENT(IN) :: ze, mu, phi
+    LOGICAL :: keep
+    REAL(num) :: u(3), xa(3), xb(3), env, b0, b
+
+    keep = .TRUE.
+    IF (.NOT. pol%polarised) RETURN
+
+    ! Stokes vectors from the collision axes to the scattering plane:
+    ! u is at phi from t1, about q for photon i and about -q for j
+    u = COS(phi) * pol%t1 + SIN(phi) * pol%t2
+    xa = pol_stored_to_obs(pol%t1, pol%t2, u, pol%xi_i)
+    xb = pol_stored_to_obs(pol%t1, -pol%t2, u, pol%xi_j)
+    CALL lbw_pol_kernel(ze, mu, xa, xb, b0, b)
+    env = (1.0_num + SQRT(DOT_PRODUCT(pol%xi_i, pol%xi_i))) &
+        * (1.0_num + SQRT(DOT_PRODUCT(pol%xi_j, pol%xi_j)))
+    keep = random() * env * b0 <= b
+
+  END FUNCTION lbw_pol_keep_angles
+
+
+
+  SUBROUTINE lbw_pol_survivor(pol, photon_i, f, spin)
+
+    ! LBW_survivor_update: Stokes vector of the photons left in
+    ! macro-photon i (photon_i = .TRUE.) or j after a collision removed
+    ! the fraction f < 1 of them. The cross-section of lbw_pol_setup is
+    ! sigma_0 (1 + a . xi) for photon i, with
+    ! sigma_0 a = (sigma_L xi_j1, sigma_C xi_j2, -sigma_L xi_j3) on its
+    ! collision axes, and symmetrically for j. Under this absorption
+    ! N xi changes at the rate of N (1 + a . xi), times the Stokes
+    ! vector xi_abs = (xi + a) / (1 + a . xi), so the removed photons
+    ! carry xi_abs and the survivors keep
+    !   xi' = (xi - f xi_abs) / (1 - f)
+    !       = xi - f / (1 - f) (a - (a . xi) xi) / (1 + a . xi).
+    ! Collisions happen at a rate proportional to sigma, each removing
+    ! the fraction f, so the mean eigen-populations along a follow the
+    ! continuous dichroic absorption by the partner photons for any
+    ! f < 1. |xi'| is clamped to 1. The result is put back on the
+    ! stored (lab) axes.
+    ! To be fixed:
+    ! - nothing is updated at f = 1, nor are photons that are tested and
+    !   not absorbed: with amplify_LBW_factor = 1 the lighter (or
+    !   equal-weight) macro-photon of a pair never changes;
+    ! - a pure state with a component normal to a gets |xi'| > 1 for
+    !   every f > 0, so the clamp biases the mean by O(f).
+    TYPE(lbw_pol_pair), INTENT(IN) :: pol
+    LOGICAL, INTENT(IN) :: photon_i
+    REAL(num), INTENT(IN) :: f
+    REAL(num), INTENT(INOUT) :: spin(3)
+    REAL(num) :: xi(3), xo(3), sa(3), xi_abs(3), norm
+
+    ! A photon that is used up (f = 1) is deleted
+    IF (.NOT. pol%polarised .OR. pol%sig_pol <= 0.0_num &
+        .OR. f >= 1.0_num) RETURN
+    IF (photon_i) THEN
+      xi = pol%xi_i
+      xo = pol%xi_j
+    ELSE
+      xi = pol%xi_j
+      xo = pol%xi_i
+    END IF
+    sa = (/ pol%sig_l * xo(1), pol%sig_c * xo(2), -pol%sig_l * xo(3) /)
+    ! An unpolarised partner absorbs every polarisation equally
+    IF (MAXVAL(ABS(sa)) <= 0.0_num) RETURN
+    xi_abs = (pol%sig_0 * xi + sa) / pol%sig_pol
+    xi = (xi - f * xi_abs) / (1.0_num - f)
+    norm = SQRT(DOT_PRODUCT(xi, xi))
+    IF (norm > 1.0_num) xi = xi / norm
+    IF (photon_i) THEN
+      spin = pol_obs_to_stored(pol%ri1, pol%ri2, pol%t1, xi)
+    ELSE
+      spin = pol_obs_to_stored(pol%rj1, pol%rj2, pol%t1, xi)
+    END IF
+
+  END SUBROUTINE lbw_pol_survivor
+
+
+
+  SUBROUTINE lbw_pol_spin_kernel(ze, mu, xa, xb, b, gm, gp, cc)
+
+    ! Angular distribution of the LBW pair in the CM frame with the
+    ! pair spins kept (report EPOCH2D_LBW_POLARISATION.md, section 16).
+    ! ze, mu, xa and xb are as in lbw_pol_kernel. For an electron and a
+    ! positron found with rest-frame spins along zm and zp,
+    !   d sigma / d Omega = r_e^2 ze / (8 C^2) b(zm, zp),
+    !   b(zm, zp) = (b + gm . zm + gp . zp + zm . cc . zp) / 4,
+    ! where b is the spin-summed kernel of lbw_pol_kernel. gm / b and
+    ! gp / b are the polarisation vectors of the electron and of the
+    ! positron, and cc / b is their spin correlation (first index: the
+    ! electron). Both spins are on the common axes (T, N, L): L along
+    ! the electron in the CM frame, N = q x u normal to the scattering
+    ! plane and T = N x L. Each is the spin in the lepton's rest frame
+    ! reached from the CM frame by a pure boost.
+    ! The amplitude for the photon basis states m (photon i: 1 along u,
+    ! 2 along q x u) and n (photon j: 1 along u, 2 along -q x u) is
+    ! 2 chi_-^+ N_mn eta_+ with the 2 x 2 matrices
+    ! N_mn = n0(m,n) + nv(:,m,n) . sigma,
+    !   N_11 = t sigma_T + (l_+ + l_-) sigma_L,
+    !   N_22 = t sigma_T + (l_+ - l_-) sigma_L,
+    !   N_12 = -i k_0 - k_N sigma_N,   N_21 = -i k_0 + k_N sigma_N,
+    ! with nu = sqrt(1 - mu^2), D = 1 - ze^2 mu^2 and
+    !   t = ze mu nu / D,  l_+ = ze nu^2 / (C D),  l_- = ze / (C D),
+    !   k_0 = 1 / (C D),   k_N = ze nu / D.
+    ! With the photons' density matrices ra, rb (EPOCH's Stokes
+    ! convention) the kernel is 4 sum ra(m,m') rb(n,n') times the Pauli
+    ! trace Tr[rho_- N_mn rho~_+ N_m'n'^+], written out below for
+    ! N = a0 + a . sigma and N' = b0 + b . sigma (section 16.3).
+    ! Only circular components (xa2, xb2) give gm and gp; cc does not
+    ! vanish even for unpolarised photons.
+    REAL(num), INTENT(IN) :: ze, mu, xa(3), xb(3)
+    REAL(num), INTENT(OUT) :: b, gm(3), gp(3), cc(3,3)
+    COMPLEX(num), PARAMETER :: iu = (0.0_num, 1.0_num)
+    COMPLEX(num) :: n0(2,2), nv(3,2,2), ra(2,2), rb(2,2)
+    COMPLEX(num) :: w, a0, b0, av(3), bv(3), ab(3), s0, sv, e(3)
+    COMPLEX(num) :: zb, zgm(3), zgp(3), zcc(3,3)
+    REAL(num) :: ic, nu, d, t, lp, lm, k0, kn
+    INTEGER :: m, n, mp, np, i, j
+
+    ic = SQRT(1.0_num - ze**2)
+    nu = SQRT(MAX(1.0_num - mu**2, 0.0_num))
+    d = 1.0_num - ze**2 * mu**2
+    t = ze * mu * nu / d
+    lp = ze * nu**2 * ic / d
+    lm = ze * ic / d
+    k0 = ic / d
+    kn = ze * nu / d
+
+    n0 = 0.0_num
+    nv = 0.0_num
+    nv(1,1,1) = t
+    nv(3,1,1) = lp + lm
+    nv(1,2,2) = t
+    nv(3,2,2) = lp - lm
+    n0(1,2) = -iu * k0
+    nv(2,1,2) = -kn
+    n0(2,1) = -iu * k0
+    nv(2,2,1) = kn
+
+    ra(1,1) = 0.5_num * (1.0_num + xa(1))
+    ra(2,2) = 0.5_num * (1.0_num - xa(1))
+    ra(1,2) = -0.5_num * (xa(3) + iu * xa(2))
+    ra(2,1) = CONJG(ra(1,2))
+    rb(1,1) = 0.5_num * (1.0_num + xb(1))
+    rb(2,2) = 0.5_num * (1.0_num - xb(1))
+    rb(1,2) = -0.5_num * (xb(3) + iu * xb(2))
+    rb(2,1) = CONJG(rb(1,2))
+
+    zb = 0.0_num
+    zgm = 0.0_num
+    zgp = 0.0_num
+    zcc = 0.0_num
+    DO np = 1, 2
+      DO mp = 1, 2
+        DO n = 1, 2
+          DO m = 1, 2
+            w = 4.0_num * ra(m,mp) * rb(n,np)
+            a0 = n0(m,n)
+            av = nv(:,m,n)
+            b0 = CONJG(n0(mp,np))
+            bv = CONJG(nv(:,mp,np))
+            ! a . b* and a x b*
+            sv = SUM(av * bv)
+            ab = (/ av(2) * bv(3) - av(3) * bv(2), &
+                av(3) * bv(1) - av(1) * bv(3), &
+                av(1) * bv(2) - av(2) * bv(1) /)
+            s0 = a0 * b0
+            zb = zb + w * (s0 + sv)
+            zgm = zgm + w * (a0 * bv + b0 * av + iu * ab)
+            zgp = zgp - w * (a0 * bv + b0 * av - iu * ab)
+            ! -[(a0 b0* - a . b*) delta_ij + a_i b*_j + b*_i a_j
+            !   + i eps_ijl (a0 b*_l - b0* a_l)]
+            e = iu * (a0 * bv - b0 * av)
+            DO j = 1, 3
+              DO i = 1, 3
+                zcc(i,j) = zcc(i,j) - w * (av(i) * bv(j) + bv(i) * av(j))
+              END DO
+              zcc(j,j) = zcc(j,j) - w * (s0 - sv)
+            END DO
+            zcc(1,2) = zcc(1,2) - w * e(3)
+            zcc(2,1) = zcc(2,1) + w * e(3)
+            zcc(2,3) = zcc(2,3) - w * e(1)
+            zcc(3,2) = zcc(3,2) + w * e(1)
+            zcc(3,1) = zcc(3,1) - w * e(2)
+            zcc(1,3) = zcc(1,3) + w * e(2)
+          END DO
+        END DO
+      END DO
+    END DO
+
+    ! The sums are real: (m'n'; mn) is the conjugate of (mn; m'n')
+    b = REAL(zb, num)
+    gm = REAL(zgm, num)
+    gp = REAL(zgp, num)
+    cc = REAL(zcc, num)
+
+  END SUBROUTINE lbw_pol_spin_kernel
+
+
+
+  FUNCTION lbw_spin_cm_to_lab(zeta, p_cm, beta_v, n_v, gamma_v, p_lab) &
+      RESULT(spin)
+
+    ! Spin of a new LBW lepton as EPOCH stores it. zeta is the spin in
+    ! the rest frame reached from the CM frame by a pure boost (the
+    ! frame of lbw_pol_spin_kernel), given as a vector in the CM frame;
+    ! p_cm and p_lab are the lepton's momenta there and in the lab,
+    ! which sees the CM frame move with velocity beta_v c (unit vector
+    ! n_v, Lorentz factor gamma_v). EPOCH stores the spin in the rest
+    ! frame reached from the lab by a pure boost (spin_rest_to_lab).
+    ! The two rest frames differ by a Wigner rotation. It is applied
+    ! here through the spin 4-vector:
+    !   1. CM frame: a'^0 = u' . zeta,
+    !      a' = zeta + (u' . zeta) u' / (gamma' + 1),  u' = p_cm / m c;
+    !   2. boost to the lab, as for the momenta in the collision
+    !      routines:
+    !      a^0 = gamma_v (a'^0 + beta_v . a'),
+    !      a = a' + (gamma_v - 1) (a' . n_v) n_v + gamma_v a'^0 beta_v;
+    !   3. the lab's rest-frame vector: spin = a - a^0 u / (gamma + 1),
+    !      u = p_lab / m c.
+    ! A rotation keeps the length; step 3 subtracts terms of order
+    ! gamma, so the length of zeta is restored against round-off.
+    REAL(num), INTENT(IN) :: zeta(3), p_cm(3), beta_v(3), n_v(3), gamma_v
+    REAL(num), INTENT(IN) :: p_lab(3)
+    REAL(num) :: spin(3), u(3), a(3), a0, a0_lab, len2, new2
+
+    spin = 0.0_num
+    len2 = DOT_PRODUCT(zeta, zeta)
+    IF (len2 <= 0.0_num) RETURN
+
+    u = p_cm / mc0
+    a0 = DOT_PRODUCT(u, zeta)
+    a = zeta + a0 / (SQRT(1.0_num + DOT_PRODUCT(u, u)) + 1.0_num) * u
+
+    a0_lab = gamma_v * (a0 + DOT_PRODUCT(beta_v, a))
+    a = a + (gamma_v - 1.0_num) * DOT_PRODUCT(a, n_v) * n_v &
+        + gamma_v * a0 * beta_v
+
+    u = p_lab / mc0
+    spin = a - a0_lab / (SQRT(1.0_num + DOT_PRODUCT(u, u)) + 1.0_num) * u
+    new2 = DOT_PRODUCT(spin, spin)
+    IF (new2 > 0.0_num) spin = spin * SQRT(len2 / new2)
+
+  END FUNCTION lbw_spin_cm_to_lab
+
+
+
+  SUBROUTINE lbw_pol_pair_spins(pol, p_i, p_j, pabs_i, pabs_j, ze, cost, &
+      phi, p_elec_lab, p_posi_lab, spin_electron, spin_positron)
+
+    ! LBW_pair_spin: spins of the pair created by a collision
+    ! (LBW_polarisation), at the angles already drawn. pol is the
+    ! candidate's lbw_pol_pair, p_i and p_j the photons' lab momenta
+    ! (sizes pabs_i, pabs_j), ze the lepton velocity in the CM frame,
+    ! cost and phi the pair angles of the collision routines, and
+    ! p_elec_lab, p_posi_lab the leptons' lab momenta. The outputs are
+    ! the spins as EPOCH stores them (lbw_spin_cm_to_lab).
+    !  1. The boost and the electron's CM direction L, as in the
+    !     collision routines (about q with LBW_differential_cross,
+    !     otherwise about the lab z axis). Scattering-plane axes:
+    !     mu = L . q, u along the part of L normal to q, N = q x u,
+    !     T = N x L; the Stokes vectors xa, xb on them as in
+    !     lbw_pol_keep_angles.
+    !  2. b, gm, gp, cc from lbw_pol_spin_kernel.
+    !  3. spin_final_states (qed block), as in nbw_final_states:
+    !     mean:     se = gm / b, sp = gp / b; no random number. Only
+    !               circular photon polarisation gives a mean spin, so
+    !               linearly polarised and unpolarised photons give
+    !               unpolarised leptons.
+    !     collapse: se = +-gm_hat with P(+) = (1 + |gm| / b) / 2 (the N
+    !               axis if gm = 0). Given se, the positron has the
+    !               weight b + se . gm and the vector k = gp + se . cc:
+    !               sp = +-k_hat with P(+) = (1 + |k| / (b + se . gm))
+    !               / 2. Two random numbers.
+    ! Averaged over the random numbers, collapse gives the mean spins.
+    ! It also keeps the pair correlation along the electron's axis,
+    ! <se_c sp_d> = gm_hat_c (gm_hat . cc)_d / b; the rest of cc / b
+    ! cannot be carried by two separate spin states. Mean mode keeps no
+    ! correlation.
+    ! Unpolarised photons (pol%polarised = F): gm = gp = 0, so the mean
+    ! spins are zero, and collapse still draws correlated spins.
+    ! The arguments are the stored particle data and the drawn angles,
+    ! not the collision routines' intermediate vectors, and the boost
+    ! is worked out again here: handing those vectors to this routine
+    ! lets the compiler regroup the routines' arithmetic (-ffast-math),
+    ! and the pair momenta then differ in the last bit from a run
+    ! without pair spins.
+    TYPE(lbw_pol_pair), INTENT(IN) :: pol
+    REAL(num), INTENT(IN) :: p_i(3), p_j(3), pabs_i, pabs_j, ze, cost, phi
+    REAL(num), INTENT(IN) :: p_elec_lab(3), p_posi_lab(3)
+    REAL(num), INTENT(OUT) :: spin_electron(3), spin_positron(3)
+    REAL(num) :: beta_v(3), n_v(3), gamma_v, bv2, p_lep_com(3), sint
+    REAL(num) :: q(3), t1(3), t2(3), p_com(3), l_hat(3), u(3)
+    REAL(num) :: t_hat(3), n_hat(3), xa(3), xb(3)
+    REAL(num) :: b, gm(3), gp(3), cc(3,3), se(3), sp(3), k(3)
+    REAL(num) :: mu, un, gn, kn, wk, p_plus
+
+    spin_electron = 0.0_num
+    spin_positron = 0.0_num
+    IF (.NOT. pol%polarised &
+        .AND. spin_final_states /= c_spin_final_collapse) RETURN
+
+    ! Boost to the CM frame (none for opposite momenta of equal size)
+    beta_v = (p_i + p_j) / (pabs_i + pabs_j)
+    bv2 = DOT_PRODUCT(beta_v, beta_v)
+    n_v = 0.0_num
+    IF (bv2 > 0.0_num) n_v = beta_v / SQRT(bv2)
+    gamma_v = 1.0_num / SQRT(1.0_num - bv2)
+
+    ! Collision axes; lbw_pol_setup does not set them for unpolarised
+    ! photons
+    IF (pol%polarised) THEN
+      q = pol%q
+      t1 = pol%t1
+      t2 = pol%t2
+    ELSE
+      p_com = p_i + (gamma_v - 1.0_num) * DOT_PRODUCT(p_i, n_v) * n_v &
+          - gamma_v * pabs_i * beta_v
+      CALL get_orthonormal(p_com, q, t1, t2)
+    END IF
+
+    ! The electron's direction and momentum in the CM frame
+    sint = SQRT(MAX(1.0_num - cost**2, 0.0_num))
+    IF (use_LBW_diff) THEN
+      l_hat = q * cost + t1 * sint * COS(phi) + t2 * sint * SIN(phi)
+    ELSE
+      l_hat = (/ sint * COS(phi), sint * SIN(phi), cost /)
+    END IF
+    p_lep_com = mc0 * ze / SQRT(1.0_num - ze**2) * l_hat
+
+    ! Spin axes (T, N, L). At threshold, or for a lepton along q, the
+    ! kernel does not depend on the choice of u.
+    mu = MIN(MAX(DOT_PRODUCT(l_hat, q), -1.0_num), 1.0_num)
+    u = l_hat - DOT_PRODUCT(l_hat, q) * q
+    un = SQRT(DOT_PRODUCT(u, u))
+    IF (un > 1.0e-12_num) THEN
+      u = u / un
+    ELSE
+      u = t1
+      l_hat = SIGN(1.0_num, mu) * q
+    END IF
+    n_hat = (/ q(2) * u(3) - q(3) * u(2), q(3) * u(1) - q(1) * u(3), &
+        q(1) * u(2) - q(2) * u(1) /)
+    t_hat = (/ n_hat(2) * l_hat(3) - n_hat(3) * l_hat(2), &
+        n_hat(3) * l_hat(1) - n_hat(1) * l_hat(3), &
+        n_hat(1) * l_hat(2) - n_hat(2) * l_hat(1) /)
+
+    xa = 0.0_num
+    xb = 0.0_num
+    IF (pol%polarised) THEN
+      xa = pol_stored_to_obs(t1, t2, u, pol%xi_i)
+      xb = pol_stored_to_obs(t1, -t2, u, pol%xi_j)
+    END IF
+    CALL lbw_pol_spin_kernel(ze, mu, xa, xb, b, gm, gp, cc)
+    ! b > 0 for the angles that were drawn; this only guards round-off
+    IF (b <= 0.0_num) RETURN
+
+    gn = SQRT(DOT_PRODUCT(gm, gm))
+    IF (spin_final_states == c_spin_final_collapse) THEN
+      ! Electron along the axis of its polarisation vector
+      IF (gn > TINY(1.0_num)) THEN
+        se = gm / gn
+      ELSE
+        ! Unpolarised: any axis, with equal probabilities
+        se = (/ 0.0_num, 1.0_num, 0.0_num /)
+      END IF
+      IF (random() >= 0.5_num * (1.0_num + MIN(gn / b, 1.0_num))) se = -se
+      ! Positron given the electron
+      k = gp + MATMUL(se, cc)
+      wk = b + DOT_PRODUCT(se, gm)
+      kn = SQRT(DOT_PRODUCT(k, k))
+      IF (kn > TINY(1.0_num)) THEN
+        sp = k / kn
+      ELSE
+        sp = (/ 0.0_num, 1.0_num, 0.0_num /)
+      END IF
+      ! wk >= |k| > 0 up to round-off; P(+) = 1 at the bound
+      p_plus = 1.0_num
+      IF (kn < wk) p_plus = 0.5_num * (1.0_num + kn / wk)
+      IF (random() >= p_plus) sp = -sp
+    ELSE
+      se = gm / MAX(b, gn)
+      sp = gp / MAX(b, SQRT(DOT_PRODUCT(gp, gp)))
+    END IF
+
+    ! CM-frame vectors, then the stored (lab) spins
+    spin_electron = lbw_spin_cm_to_lab( &
+        se(1) * t_hat + se(2) * n_hat + se(3) * l_hat, p_lep_com, &
+        beta_v, n_v, gamma_v, p_elec_lab)
+    spin_positron = lbw_spin_cm_to_lab( &
+        sp(1) * t_hat + sp(2) * n_hat + sp(3) * l_hat, -p_lep_com, &
+        beta_v, n_v, gamma_v, p_posi_lab)
+
+  END SUBROUTINE lbw_pol_pair_spins
+#endif
 #endif
 END MODULE photons
