@@ -340,6 +340,7 @@ CONTAINS
 #ifdef SPIN
       species_list(ispecies)%spin_distribution = c_spin_null
       species_list(ispecies)%spin_orientation = 0.0_num
+      species_list(ispecies)%spin_given = .FALSE.
       species_list(ispecies)%anomalous_magnetic_moment = &
           c_anomalous_moment_unset
 #endif

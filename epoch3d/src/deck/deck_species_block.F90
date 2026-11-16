@@ -268,6 +268,11 @@ CONTAINS
             + species_list(i)%spin_orientation(2)**2 &
             + species_list(i)%spin_orientation(3)**2
 
+        ! Record whether the deck set anything, before the defaults below:
+        ! particles_from_file applies the species spin only in that case
+        species_list(i)%spin_given = spin_mag > 0.0_num &
+            .OR. species_list(i)%spin_distribution /= c_spin_null
+
         IF (species_list(i)%species_type == c_species_id_photon) THEN
           ! Photon polarisation: |P| <= 1, kept as given (not normalised);
           ! no settings leaves c_spin_null, i.e. unpolarised (P = 0)

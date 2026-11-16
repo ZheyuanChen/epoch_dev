@@ -307,6 +307,8 @@ MODULE shared_data
 #ifdef SPIN
     INTEGER :: spin_distribution
     REAL(num), DIMENSION(3) :: spin_orientation
+    ! True if the deck set the spin or polarisation of this species
+    LOGICAL :: spin_given
     REAL(num) :: anomalous_magnetic_moment
 #endif
   END TYPE particle_species
