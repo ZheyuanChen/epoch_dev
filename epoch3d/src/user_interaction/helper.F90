@@ -947,7 +947,8 @@ CONTAINS
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
     INTEGER(KIND=i4), DIMENSION(:), POINTER :: idbuf4
     INTEGER(KIND=i8), DIMENSION(:), POINTER :: idbuf8
-    INTEGER :: i, id_offset
+    INTEGER :: i
+    INTEGER(i8) :: id_offset
     INTEGER, DIMENSION(:), POINTER :: part_counts
 #endif
     TYPE(particle_species), POINTER :: species
@@ -1038,10 +1039,14 @@ CONTAINS
         ALLOCATE(part_counts(0:nproc-1))
         CALL MPI_ALLGATHER(part_count, 1, MPI_INTEGER4, part_counts, 1, &
             MPI_INTEGER4, comm, errcode)
-        id_offset = 0
-        DO i = 0, rank
+        ! Number on from the IDs already assigned, after those of the
+        ! lower ranks
+        id_offset = particles_max_id
+        DO i = 0, rank - 1
           id_offset = id_offset + part_counts(i)
         END DO
+        particles_max_id = particles_max_id + SUM(INT(part_counts, i8))
+        DEALLOCATE(part_counts)
       END IF
 #endif
 
@@ -1065,6 +1070,19 @@ CONTAINS
         IF (curr_loader%pz_data_given) THEN
           new_particle%part_p(3) = pzbuf(read_count)
         END IF
+#if defined(PHOTONS) || defined(BREMSSTRAHLUNG)
+        ! The photon push uses the stored energy; set it as auto_load does
+        IF (species%species_type == c_species_id_photon) THEN
+          new_particle%particle_energy = SQRT(SUM(new_particle%part_p**2)) * c
+        END IF
+#endif
+#ifdef SPIN
+        ! Spin (leptons) or polarisation (photons) set in the species
+        ! block. auto_load sets these only for its own particles, so set
+        ! them here, per particle. With no setting the spin stays zero,
+        ! unlike the random unit spins of an auto-loaded lepton species.
+        IF (species%spin_given) CALL init_particle_spin(species, new_particle)
+#endif
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
         IF (curr_loader%id_data_given) THEN
 #if defined(PARTICLE_ID4)
@@ -1102,6 +1120,13 @@ CONTAINS
           io = ios_units(iu)
           WRITE(io,*) 'Inserted ', TRIM(stra), &
               ' custom particles of species "', TRIM(species%name), '"'
+#ifdef SPIN
+          IF (.NOT.species%spin_given &
+              .AND. species%species_type /= c_species_id_photon) THEN
+            WRITE(io,*) 'They start with zero spin: species "', &
+                TRIM(species%name), '" sets no spin'
+          END IF
+#endif
         END DO
       END IF
     END DO
