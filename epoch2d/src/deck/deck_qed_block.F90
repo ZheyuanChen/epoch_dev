@@ -55,6 +55,7 @@ CONTAINS
       LBW_pol_cross_section = .TRUE.
       LBW_pol_angles = .TRUE.
       LBW_pair_spin = .TRUE.
+      LBW_survivor_scheme = c_lbw_survivor_step
       use_full_landau_lifshitz = .FALSE.
       ll_gradient_term = .TRUE.
       ll_quadratic_term = .TRUE.
@@ -400,6 +401,20 @@ CONTAINS
 
     IF (str_cmp(element, 'LBW_pair_spin')) THEN
       LBW_pair_spin = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! LBW survivor update of the photons that have not converted: 
+    ! a weak filter on every photon every step (default), or on 
+    ! both photons of every candidate test
+    IF (str_cmp(element, 'LBW_survivor_scheme')) THEN
+      IF (str_cmp(value, 'step')) THEN
+        LBW_survivor_scheme = c_lbw_survivor_step
+      ELSE IF (str_cmp(value, 'candidate')) THEN
+        LBW_survivor_scheme = c_lbw_survivor_candidate
+      ELSE
+        errcode = c_err_bad_value
+      END IF
       RETURN
     END IF
 

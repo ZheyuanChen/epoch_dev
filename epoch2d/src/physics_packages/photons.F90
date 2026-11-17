@@ -43,6 +43,9 @@ MODULE photons
     REAL(num), DIMENSION(3) :: q, t1, t2, ri1, ri2, rj1, rj2, xi_i, xi_j
     REAL(num) :: sig_0, sig_l, sig_c, sig_pol
   END TYPE lbw_pol_pair
+  ! Accepted pairs that kept the unpolarised angles because the
+  ! rejection would need too many draws (lbw_pol_reject_angles)
+  INTEGER(i8), PRIVATE :: lbw_angle_fallbacks = 0
 #endif
   SAVE
   REAL(num) :: part_pos_global, gamma_global, eta_global
@@ -107,6 +110,26 @@ CONTAINS
 
 
   SUBROUTINE shutdown_qed_module
+
+#ifdef SPIN
+    INTEGER(i8) :: n_fallbacks
+    INTEGER :: io, iu
+
+    ! Polarised LBW pairs that kept the unpolarised angles
+    IF (use_LBW .AND. LBW_polarisation) THEN
+      CALL MPI_REDUCE(lbw_angle_fallbacks, n_fallbacks, 1, MPI_INTEGER8, &
+          MPI_SUM, 0, comm, errcode)
+      IF (rank == 0 .AND. n_fallbacks > 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** WARNING ***'
+          WRITE(io,*) 'Linear Breit-Wheeler: ', n_fallbacks, &
+              ' pairs near threshold kept the unpolarised angles.'
+        END DO
+      END IF
+    END IF
+#endif
 
     CALL deallocate_tables_qed
 
@@ -2369,6 +2392,8 @@ CONTAINS
     REAL(num) :: com_beta, sigma_lbw, sigma_coll, P_coll, bv2
 #ifdef SPIN
     TYPE(lbw_pol_pair) :: pol
+    REAL(num) :: x0_a
+    LOGICAL :: reject
 #endif
     REAL(num) :: Y_ij
     REAL(num), DIMENSION(2) :: lepton_pos
@@ -2383,6 +2408,17 @@ CONTAINS
     ! If there aren't enough particles to collide, then don't bother
     icount = p_list_i%count
     IF (icount < 2) RETURN
+
+#ifdef SPIN
+    ! LBW_survivor_scheme = step: this step's survivor filter on every
+    ! photon, before the collision tests. With LBW_pol_cross_section = F
+    ! the photons are absorbed whatever their polarisation, so the
+    ! survivors keep their Stokes vectors.
+    IF (LBW_polarisation .AND. LBW_survivor_update &
+        .AND. LBW_pol_cross_section &
+        .AND. LBW_survivor_scheme == c_lbw_survivor_step) &
+        CALL lbw_survivor_step_intra(p_list_i)
+#endif
 
     !!! Determine how many macro-macro pairings are up to be checked
     ! maximal possible collisional probability P_max
@@ -2474,6 +2510,23 @@ CONTAINS
 
       ! collisional probability after modification by P_max
       P_coll = sigma_coll * cdt_dV * MAX(weight_i, weight_j) * kappa * i_Pmax
+#ifdef SPIN
+      ! LBW_survivor_scheme = candidate: both photons of every candidate
+      ! test, accepted or not, by the fraction the test removes on
+      ! average from an unpolarised photon, x0 = f P_coll sigma_0 / sigma
+      ! with f = Y / w (pol keeps the Stokes vectors from before). With
+      ! LBW_pol_cross_section = F the survivors keep their Stokes vectors.
+      IF (LBW_polarisation .AND. LBW_survivor_update &
+          .AND. LBW_pol_cross_section &
+          .AND. LBW_survivor_scheme == c_lbw_survivor_candidate) THEN
+        x0_a = pol%sig_0 * cdt_dV * MAX(weight_i, weight_j) * kappa &
+            * i_Pmax * MIN(weight_i, weight_j) * i_LBW_amp_factor
+        CALL lbw_pol_filter(pol, .TRUE., x0_a / weight_i, .FALSE., &
+            current_i%spin)
+        CALL lbw_pol_filter(pol, .FALSE., x0_a / weight_j, .FALSE., &
+            current_j%spin)
+      END IF
+#endif
 
       IF (random() > P_coll) THEN
         ! These two macro-photons do not collide (due to collisional probability)
@@ -2515,6 +2568,16 @@ CONTAINS
         ! Orthonormal basis (e1, e2, e3) s.t. e1//photon momentum in c.o.m.
         CALL get_orthonormal(p_phot_com, e1, e2, e3)
 
+#ifdef SPIN
+        ! LBW_polarisation: keep the (unpolarised) angles drawn below
+        ! with the ratio of polarised to unpolarised distributions
+        ! (rejection), unless that needs too many draws
+        ! (lbw_pol_reject_angles). LBW_pol_angles = F (test switch)
+        ! keeps the first draw.
+        reject = .FALSE.
+        IF (LBW_polarisation .AND. LBW_pol_angles) &
+            reject = lbw_pol_reject_angles(pol)
+#endif
         DO
           ! Random azimuthal angle in c.o.m.
           rand_phi = 2.0_num * pi * random()
@@ -2522,10 +2585,7 @@ CONTAINS
           ! Random polar angle in c.o.m. (cosine of this random angle)
           cost = random_polar_lbw(com_beta, sigma_lbw)
 #ifdef SPIN
-          ! LBW_polarisation: keep these (unpolarised) angles with the
-          ! ratio of polarised to unpolarised distributions (rejection).
-          ! LBW_pol_angles = F (test switch) keeps the first draw.
-          IF (.NOT. LBW_polarisation .OR. .NOT. LBW_pol_angles) EXIT
+          IF (.NOT. reject) EXIT
           IF (lbw_pol_keep_angles(pol, com_beta, cost, rand_phi)) EXIT
 #else
           EXIT
@@ -2583,16 +2643,6 @@ CONTAINS
             current_j%part_p, pi_abs, pj_abs, com_beta, cost, rand_phi, &
             new_electron%part_p, new_positron%part_p, &
             new_electron%spin, new_positron%spin)
-      END IF
-
-      ! LBW_survivor_update: Stokes vectors of the photons left in each
-      ! macro-photon (f = 1, no update, for one that is deleted below).
-      ! With LBW_pol_cross_section = F the photons are absorbed whatever
-      ! their polarisation, so the survivors keep their Stokes vector.
-      IF (LBW_polarisation .AND. LBW_survivor_update &
-          .AND. LBW_pol_cross_section) THEN
-        CALL lbw_pol_survivor(pol, .TRUE., Y_ij / weight_i, current_i%spin)
-        CALL lbw_pol_survivor(pol, .FALSE., Y_ij / weight_j, current_j%spin)
       END IF
 #endif
 
@@ -2663,6 +2713,8 @@ CONTAINS
     REAL(num) :: com_beta, sigma_lbw, sigma_coll, P_coll, bv2
 #ifdef SPIN
     TYPE(lbw_pol_pair) :: pol
+    REAL(num) :: x0_a
+    LOGICAL :: reject
 #endif
     REAL(num) :: Y_ij
     REAL(num), DIMENSION(2) :: lepton_pos
@@ -2678,6 +2730,17 @@ CONTAINS
     icount = p_list_i%count
     jcount = p_list_j%count
     IF (icount < 1 .OR. jcount < 1) RETURN
+
+#ifdef SPIN
+    ! LBW_survivor_scheme = step: this step's survivor filter on every
+    ! photon, before the collision tests. With LBW_pol_cross_section = F
+    ! the photons are absorbed whatever their polarisation, so the
+    ! survivors keep their Stokes vectors.
+    IF (LBW_polarisation .AND. LBW_survivor_update &
+        .AND. LBW_pol_cross_section &
+        .AND. LBW_survivor_scheme == c_lbw_survivor_step) &
+        CALL lbw_survivor_step_inter(p_list_i, p_list_j)
+#endif
 
     !!! Determine how many macro-macro pairings are up to be checked
     ! maximal possible collisional probability P_max
@@ -2772,6 +2835,23 @@ CONTAINS
 
       ! collisional probability after modification by P_max
       P_coll = sigma_coll * cdt_dV * MAX(weight_i, weight_j) * kappa * i_Pmax
+#ifdef SPIN
+      ! LBW_survivor_scheme = candidate: both photons of every candidate
+      ! test, accepted or not, by the fraction the test removes on
+      ! average from an unpolarised photon, x0 = f P_coll sigma_0 / sigma
+      ! with f = Y / w (pol keeps the Stokes vectors from before). With
+      ! LBW_pol_cross_section = F the survivors keep their Stokes vectors.
+      IF (LBW_polarisation .AND. LBW_survivor_update &
+          .AND. LBW_pol_cross_section &
+          .AND. LBW_survivor_scheme == c_lbw_survivor_candidate) THEN
+        x0_a = pol%sig_0 * cdt_dV * MAX(weight_i, weight_j) * kappa &
+            * i_Pmax * MIN(weight_i, weight_j) * i_LBW_amp_factor
+        CALL lbw_pol_filter(pol, .TRUE., x0_a / weight_i, .FALSE., &
+            current_i%spin)
+        CALL lbw_pol_filter(pol, .FALSE., x0_a / weight_j, .FALSE., &
+            current_j%spin)
+      END IF
+#endif
 
       IF (random() > P_coll) THEN
         ! These two macro-photons do not collide (due to collisional probability)
@@ -2813,6 +2893,16 @@ CONTAINS
         ! Orthonormal basis (e1, e2, e3) s.t. e1//photon momentum in c.o.m.
         CALL get_orthonormal(p_phot_com, e1, e2, e3)
 
+#ifdef SPIN
+        ! LBW_polarisation: keep the (unpolarised) angles drawn below
+        ! with the ratio of polarised to unpolarised distributions
+        ! (rejection), unless that needs too many draws
+        ! (lbw_pol_reject_angles). LBW_pol_angles = F (test switch)
+        ! keeps the first draw.
+        reject = .FALSE.
+        IF (LBW_polarisation .AND. LBW_pol_angles) &
+            reject = lbw_pol_reject_angles(pol)
+#endif
         DO
           ! Random azimuthal angle in c.o.m.
           rand_phi = 2.0_num * pi * random()
@@ -2820,10 +2910,7 @@ CONTAINS
           ! Random polar angle in c.o.m. (cosine of this random angle)
           cost = random_polar_lbw(com_beta, sigma_lbw)
 #ifdef SPIN
-          ! LBW_polarisation: keep these (unpolarised) angles with the
-          ! ratio of polarised to unpolarised distributions (rejection).
-          ! LBW_pol_angles = F (test switch) keeps the first draw.
-          IF (.NOT. LBW_polarisation .OR. .NOT. LBW_pol_angles) EXIT
+          IF (.NOT. reject) EXIT
           IF (lbw_pol_keep_angles(pol, com_beta, cost, rand_phi)) EXIT
 #else
           EXIT
@@ -2881,16 +2968,6 @@ CONTAINS
             current_j%part_p, pi_abs, pj_abs, com_beta, cost, rand_phi, &
             new_electron%part_p, new_positron%part_p, &
             new_electron%spin, new_positron%spin)
-      END IF
-
-      ! LBW_survivor_update: Stokes vectors of the photons left in each
-      ! macro-photon (f = 1, no update, for one that is deleted below).
-      ! With LBW_pol_cross_section = F the photons are absorbed whatever
-      ! their polarisation, so the survivors keep their Stokes vector.
-      IF (LBW_polarisation .AND. LBW_survivor_update &
-          .AND. LBW_pol_cross_section) THEN
-        CALL lbw_pol_survivor(pol, .TRUE., Y_ij / weight_i, current_i%spin)
-        CALL lbw_pol_survivor(pol, .FALSE., Y_ij / weight_j, current_j%spin)
       END IF
 #endif
 
@@ -3103,6 +3180,9 @@ CONTAINS
 
     pol%polarised = MAXVAL(ABS(spin_i)) > 0.0_num &
         .OR. MAXVAL(ABS(spin_j)) > 0.0_num
+    pol%sig_0 = sigma0
+    pol%sig_l = 0.0_num
+    pol%sig_c = 0.0_num
     pol%sig_pol = sigma0
     IF (.NOT. pol%polarised) RETURN
 
@@ -3190,10 +3270,9 @@ CONTAINS
     ! operator is positive. The mean number of draws is
     ! env sigma_0 / sigma. Unpolarised pairs are kept without a random
     ! number.
-    ! KNOWN (review, 4 November 2026; section 13 of the report): the
-    ! caller's loop has no bound; near threshold a pure pair needs
-    ! about 1.2 / ze^2 draws (parallel linear) or 1.5 / ze^2 (opposite
-    ! helicities), though at most 3 per candidate test on average.
+    ! Near threshold a pure pair needs about 1.2 / ze^2 draws (parallel
+    ! linear) or 1.5 / ze^2 (opposite helicities), though at most 3 per
+    ! candidate test on average; lbw_pol_reject_angles bounds the mean.
     TYPE(lbw_pol_pair), INTENT(IN) :: pol
     REAL(num), INTENT(IN) :: ze, mu, phi
     LOGICAL :: keep
@@ -3216,39 +3295,72 @@ CONTAINS
 
 
 
-  SUBROUTINE lbw_pol_survivor(pol, photon_i, f, spin)
+  FUNCTION lbw_pol_reject_angles(pol) RESULT(reject)
 
-    ! LBW_survivor_update: Stokes vector of the photons left in
-    ! macro-photon i (photon_i = .TRUE.) or j after a collision removed
-    ! the fraction f < 1 of them. The cross-section of lbw_pol_setup is
-    ! sigma_0 (1 + a . xi) for photon i, with
-    ! sigma_0 a = (sigma_L xi_j1, sigma_C xi_j2, -sigma_L xi_j3) on its
-    ! collision axes, and symmetrically for j. Under this absorption
-    ! N xi changes at the rate of N (1 + a . xi), times the Stokes
-    ! vector xi_abs = (xi + a) / (1 + a . xi), so the removed photons
-    ! carry xi_abs and the survivors keep
-    !   xi' = (xi - f xi_abs) / (1 - f)
-    !       = xi - f / (1 - f) (a - (a . xi) xi) / (1 + a . xi).
-    ! Collisions happen at a rate proportional to sigma, each removing
-    ! the fraction f, so the mean eigen-populations along a follow the
-    ! continuous dichroic absorption by the partner photons for any
-    ! f < 1. |xi'| is clamped to 1. The result is put back on the
-    ! stored (lab) axes.
-    ! To be fixed:
-    ! - nothing is updated at f = 1, nor are photons that are tested and
-    !   not absorbed: with amplify_LBW_factor = 1 the lighter (or
-    !   equal-weight) macro-photon of a pair never changes;
-    ! - a pure state with a component normal to a gets |xi'| > 1 for
-    !   every f > 0, so the clamp biases the mean by O(f).
+    ! LBW_polarisation, pair angles: .TRUE. to draw the polarised angles
+    ! by rejection from the unpolarised ones (lbw_pol_keep_angles). The
+    ! mean number of draws is env sigma_0 / sigma. Above
+    ! lbw_max_angle_draws the unpolarised angles are kept instead, and
+    ! the pair is counted (shutdown_qed_module reports the total). This
+    ! happens only near threshold, for nearly pure photons that suppress
+    ! sigma (parallel linear: 1.2 / ze^2 draws, opposite helicities
+    ! 1.5 / ze^2, so ze below about 0.04, C - 1 below about 1e-3); far
+    ! above threshold the mean grows only like log(C), to 56 draws for
+    ! equal helicities at C = 1e6. There the pair's CM momentum is below
+    ! about 0.04 m c, so its angles hardly matter.
     TYPE(lbw_pol_pair), INTENT(IN) :: pol
-    LOGICAL, INTENT(IN) :: photon_i
-    REAL(num), INTENT(IN) :: f
-    REAL(num), INTENT(INOUT) :: spin(3)
-    REAL(num) :: xi(3), xo(3), sa(3), xi_abs(3), norm
+    LOGICAL :: reject
+    REAL(num) :: env
 
-    ! A photon that is used up (f = 1) is deleted
-    IF (.NOT. pol%polarised .OR. pol%sig_pol <= 0.0_num &
-        .OR. f >= 1.0_num) RETURN
+    reject = .FALSE.
+    ! Unpolarised photons: the unpolarised angles are exact
+    IF (.NOT. pol%polarised) RETURN
+    env = (1.0_num + SQRT(DOT_PRODUCT(pol%xi_i, pol%xi_i))) &
+        * (1.0_num + SQRT(DOT_PRODUCT(pol%xi_j, pol%xi_j)))
+    IF (env * pol%sig_0 > lbw_max_angle_draws * pol%sig_pol) THEN
+      lbw_angle_fallbacks = lbw_angle_fallbacks + 1
+      RETURN
+    END IF
+    reject = .TRUE.
+
+  END FUNCTION lbw_pol_reject_angles
+
+
+
+  SUBROUTINE lbw_pol_filter(pol, photon_i, x0, step, spin)
+
+    ! LBW_survivor_update: Stokes vector of photon i (photon_i = .TRUE.)
+    ! or j of the pair pol that has not converted, after an absorption
+    ! of strength x0 by its partner. The cross-section of lbw_pol_setup
+    ! is sigma_0 (1 + a . xi) for photon i, with
+    ! sigma_0 a = (sigma_L xi_j1, sigma_C xi_j2, -sigma_L xi_j3) on its
+    ! collision axes, and symmetrically for j. So the absorption
+    ! operator is X = x0 (1 + a . sigma_Pauli), where x0 is the fraction
+    ! absorbed from an unpolarised photon, and the survivor's density
+    ! matrix is K rho K / tr(K rho K). This is positive and keeps pure
+    ! states pure. With A = |a|, xi_par = xi . a / A, xi_perp the rest:
+    ! - step = .TRUE., K = exp(-X / 2), the exact continuous evolution
+    !   against a fixed partner (LBW_survivor_scheme = step): a Lorentz
+    !   boost of (1, xi) against a, rapidity x0 A, t = tanh(x0 A),
+    !     xi_par' = (xi_par - t) / n,
+    !     xi_perp' = sqrt(1 - t^2) xi_perp / n,  n = 1 - t xi_par;
+    ! - step = .FALSE., K = sqrt(1 - X), a photon tested and not
+    !   absorbed (LBW_survivor_scheme = candidate), x_pm = x0 (1 pm A),
+    !     xi_par' = ((1 - x0) xi_par - x0 A) / n,
+    !     xi_perp' = sqrt((1 - x_+) (1 - x_-)) xi_perp / n,
+    !     n = 1 - x0 (1 + A xi_par).
+    !   x_+ <= 1 since P_max bounds the acceptance of every photon
+    !   state; x0 is capped there against round-off.
+    ! The result is put back on the stored (lab) axes. An unpolarised
+    ! partner (a = 0) absorbs every polarisation equally: no change.
+    TYPE(lbw_pol_pair), INTENT(IN) :: pol
+    LOGICAL, INTENT(IN) :: photon_i, step
+    REAL(num), INTENT(IN) :: x0
+    REAL(num), INTENT(INOUT) :: spin(3)
+    REAL(num) :: xi(3), xo(3), a(3), xperp(3), amag, par, x, t, n, cperp
+
+    IF (.NOT. pol%polarised .OR. pol%sig_0 <= 0.0_num &
+        .OR. x0 <= 0.0_num) RETURN
     IF (photon_i) THEN
       xi = pol%xi_i
       xo = pol%xi_j
@@ -3256,20 +3368,137 @@ CONTAINS
       xi = pol%xi_j
       xo = pol%xi_i
     END IF
-    sa = (/ pol%sig_l * xo(1), pol%sig_c * xo(2), -pol%sig_l * xo(3) /)
-    ! An unpolarised partner absorbs every polarisation equally
-    IF (MAXVAL(ABS(sa)) <= 0.0_num) RETURN
-    xi_abs = (pol%sig_0 * xi + sa) / pol%sig_pol
-    xi = (xi - f * xi_abs) / (1.0_num - f)
-    norm = SQRT(DOT_PRODUCT(xi, xi))
-    IF (norm > 1.0_num) xi = xi / norm
+    a = (/ pol%sig_l * xo(1), pol%sig_c * xo(2), -pol%sig_l * xo(3) /) &
+        / pol%sig_0
+    amag = SQRT(DOT_PRODUCT(a, a))
+    IF (amag <= 0.0_num) RETURN
+    a = a / amag
+    par = DOT_PRODUCT(xi, a)
+    xperp = xi - par * a
+    IF (step) THEN
+      t = TANH(x0 * amag)
+      n = 1.0_num - t * par
+      cperp = SQRT(1.0_num - t**2)
+      xi = ((par - t) * a + cperp * xperp) / n
+    ELSE
+      x = MIN(x0, 1.0_num / (1.0_num + amag))
+      n = 1.0_num - x * (1.0_num + amag * par)
+      ! Only a pure state along a, certainly absorbed, has n = 0
+      IF (n <= 0.0_num) RETURN
+      cperp = SQRT(MAX((1.0_num - x * (1.0_num + amag)) &
+          * (1.0_num - x * (1.0_num - amag)), 0.0_num))
+      xi = (((1.0_num - x) * par - x * amag) * a + cperp * xperp) / n
+    END IF
     IF (photon_i) THEN
       spin = pol_obs_to_stored(pol%ri1, pol%ri2, pol%t1, xi)
     ELSE
       spin = pol_obs_to_stored(pol%rj1, pol%rj2, pol%t1, xi)
     END IF
 
-  END SUBROUTINE lbw_pol_survivor
+  END SUBROUTINE lbw_pol_filter
+
+
+
+  SUBROUTINE lbw_survivor_step_pair(part_i, part_j, scale_i, scale_j)
+
+    ! LBW_survivor_scheme = step: one step of the survivor filter
+    ! (lbw_pol_filter, exp form) on photons i and j from each other.
+    ! scale_i is the number of photons of the partner list that j
+    ! stands for (0: leave i unchanged), and symmetrically scale_j. The
+    ! strength for i,
+    !   x0_i = scale_i w_j c dt / V kappa sigma_0,
+    ! is the fraction of unpolarised photons i that the partner list
+    ! absorbs in the step. amplify_LBW_factor is left out: it changes
+    ! the number of collisions, not the physical absorption. Both
+    ! filters use the Stokes vectors from before either changes.
+    TYPE(particle), POINTER :: part_i, part_j
+    REAL(num), INTENT(IN) :: scale_i, scale_j
+    TYPE(lbw_pol_pair) :: pol
+    REAL(num) :: pi_abs, pj_abs, pipj, pipj_cos, en_com2, ze, x0
+
+    pi_abs = part_i%particle_energy * inv_c
+    pj_abs = part_j%particle_energy * inv_c
+    pipj = pi_abs * pj_abs
+    pipj_cos = pipj - DOT_PRODUCT(part_i%part_p, part_j%part_p)
+    en_com2 = pipj_cos * 0.5_num * inv_mc0_sq
+    ! Nothing is absorbed below threshold
+    IF (en_com2 < 1.0_num) RETURN
+    ze = SQRT(1.0_num - 1.0_num / en_com2)
+    CALL lbw_pol_setup(part_i%part_p, part_j%part_p, pi_abs, pj_abs, &
+        part_i%spin, part_j%spin, ze, lbw_cross_sec(ze), pol)
+    IF (.NOT. pol%polarised) RETURN
+    x0 = cdt_dV * i_LBW_amp_factor * pipj_cos / pipj * pol%sig_0
+    IF (scale_i > 0.0_num) CALL lbw_pol_filter(pol, .TRUE., &
+        scale_i * part_j%weight * x0, .TRUE., part_i%spin)
+    IF (scale_j > 0.0_num) CALL lbw_pol_filter(pol, .FALSE., &
+        scale_j * part_i%weight * x0, .TRUE., part_j%spin)
+
+  END SUBROUTINE lbw_survivor_step_pair
+
+
+
+  SUBROUTINE lbw_survivor_step_intra(p_list)
+
+    ! LBW_survivor_scheme = step, the photons of one species in a cell:
+    ! after a shuffle, consecutive photons are partners, each standing
+    ! for the other N - 1 photons (an unbiased estimate of the sum over
+    ! them). For N odd the last photon is filtered by the first, which
+    ! is not filtered again.
+    TYPE(particle_list), INTENT(INOUT) :: p_list
+    TYPE(particle), POINTER :: current_i, current_j
+    REAL(num) :: scale
+
+    IF (p_list%count < 2) RETURN
+    CALL shuffle_particle_list_random(p_list)
+    scale = REAL(p_list%count - 1, num)
+    current_i => p_list%head
+    DO WHILE (ASSOCIATED(current_i))
+      current_j => current_i%next
+      IF (.NOT. ASSOCIATED(current_j)) THEN
+        current_j => p_list%head
+        CALL lbw_survivor_step_pair(current_i, current_j, scale, 0.0_num)
+        EXIT
+      END IF
+      CALL lbw_survivor_step_pair(current_i, current_j, scale, scale)
+      current_i => current_j%next
+    END DO
+
+  END SUBROUTINE lbw_survivor_step_intra
+
+
+
+  SUBROUTINE lbw_survivor_step_inter(p_list_i, p_list_j)
+
+    ! LBW_survivor_scheme = step, the photons of two species in a cell:
+    ! after shuffles the two lists are walked together, the shorter one
+    ! cycled until every photon of the longer has a partner. A photon
+    ! stands for all the photons of the other list. Each photon is
+    ! filtered once, a photon of the shorter list at its first pairing.
+    TYPE(particle_list), INTENT(INOUT) :: p_list_i, p_list_j
+    TYPE(particle), POINTER :: current_i, current_j
+    INTEGER(i8) :: icount, jcount, k
+    REAL(num) :: scale_i, scale_j
+
+    icount = p_list_i%count
+    jcount = p_list_j%count
+    IF (icount < 1 .OR. jcount < 1) RETURN
+    CALL shuffle_particle_list_random(p_list_i)
+    CALL shuffle_particle_list_random(p_list_j)
+    current_i => p_list_i%head
+    current_j => p_list_j%head
+    DO k = 1, MAX(icount, jcount)
+      scale_i = 0.0_num
+      scale_j = 0.0_num
+      IF (k <= icount) scale_i = REAL(jcount, num)
+      IF (k <= jcount) scale_j = REAL(icount, num)
+      CALL lbw_survivor_step_pair(current_i, current_j, scale_i, scale_j)
+      current_i => current_i%next
+      IF (.NOT. ASSOCIATED(current_i)) current_i => p_list_i%head
+      current_j => current_j%next
+      IF (.NOT. ASSOCIATED(current_j)) current_j => p_list_j%head
+    END DO
+
+  END SUBROUTINE lbw_survivor_step_inter
 
 
 

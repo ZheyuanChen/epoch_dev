@@ -149,6 +149,15 @@ MODULE constants
 
 #endif
 
+  ! Survivor update of polarised linear Breit-Wheeler (qed block
+  ! LBW_survivor_scheme): a weak filter on every photon every step, or
+  ! a Kraus update of both photons of every candidate test
+  INTEGER, PARAMETER :: c_lbw_survivor_step = 1
+  INTEGER, PARAMETER :: c_lbw_survivor_candidate = 2
+  ! Polarised LBW pair angles: the largest expected number of rejection
+  ! draws; a pair that needs more keeps the unpolarised angles
+  REAL(num), PARAMETER :: lbw_max_angle_draws = 1.0e3_num
+
 
   ! Frequency function type codes
   INTEGER, PARAMETER :: c_of_omega = 1
