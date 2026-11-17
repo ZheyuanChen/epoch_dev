@@ -50,6 +50,7 @@ CONTAINS
       use_LBW = .FALSE.
       use_LBW_diff = .TRUE.
       LBW_amp_factor = 1.0_num
+      vacuum_birefringence = .FALSE.
 #ifdef SPIN
       use_spin_qed = .FALSE.
       spin_second_order_depth = .FALSE.
@@ -137,9 +138,57 @@ CONTAINS
       CALL check_spin_table('nbw_energy_split_par.table')
       CALL check_spin_table('nbw_energy_split_perp.table')
     END IF
+
+    ! LCFA vacuum-birefringence phase
+    IF (rank == 0 .AND. use_qed .AND. vacuum_birefringence) &
+        CALL check_spin_table('vacuum_birefringence.table')
+
+    ! The NBW rate and the phase are one complex polarisation operator
+    ! only with the polarised, exact LCFA rate
+    IF (rank == 0 .AND. use_qed .AND. vacuum_birefringence &
+        .AND. produce_pairs .AND. (.NOT. use_spin_qed &
+        .OR. pair_tables /= c_pair_tables_lcfa)) THEN
+      DO iu = 1, nio_units ! Print to stdout and to file
+        io = io_units(iu)
+        WRITE(io,*)
+        WRITE(io,*) '*** WARNING ***'
+        WRITE(io,*) 'vacuum_birefringence=T with produce_pairs=T: the ', &
+            'NBW rate is consistent with the phase only with ', &
+            'use_spin_qed=T and pair_tables=lcfa.'
+      END DO
+    END IF
 #endif
 
     IF (use_qed) need_random_state = .TRUE.
+
+    ! The birefringence phase is applied with the rest of QED; without
+    ! use_qed it would silently do nothing
+    IF (vacuum_birefringence .AND. .NOT. use_qed) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'vacuum_birefringence=T needs use_qed=T.'
+        END DO
+      END IF
+      CALL abort_code(c_err_bad_value)
+    END IF
+
+#ifndef SPIN
+    ! Photon Stokes vectors exist only with -DSPIN
+    IF (vacuum_birefringence) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'Unable to set "vacuum_birefringence=T" in the ', &
+              '"qed" block.'
+          WRITE(io,*) 'Please recompile with the -DSPIN preprocessor flag.'
+        END DO
+      END IF
+      CALL abort_code(c_err_pp_options_missing)
+    END IF
+#endif
 
     use_binary_collisions = use_LBW
 
@@ -299,6 +348,13 @@ CONTAINS
       RETURN
     END IF
 
+    ! LCFA vacuum birefringence: the one-loop phase between the two
+    ! local eigenmodes rotates every photon's Stokes vector
+    IF (str_cmp(element, 'vacuum_birefringence')) THEN
+      vacuum_birefringence = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
 #ifdef SPIN
     IF (str_cmp(element, 'use_spin_qed') &
         .OR. str_cmp(element, 'spin_qed')) THEN
@@ -437,6 +493,24 @@ CONTAINS
                                .OR. use_classical_emission)
 
 #ifdef SPIN
+    ! LCFA vacuum birefringence acts on the Stokes vectors of moving
+    ! photons; photon_polarisation = F would silently disable it
+    ! (use_qed = F is rejected in qed_deck_finalise)
+    IF (vacuum_birefringence .AND. (.NOT. photon_dynamics &
+        .OR. .NOT. photon_polarisation)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'vacuum_birefringence=T needs ', &
+              'photon_dynamics=T and photon_polarisation=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
     ! Continuous emission has no discrete events to resolve spin with
     IF (use_qed .AND. use_spin_qed .AND. use_continuous_emission) THEN
       IF (rank == 0) THEN

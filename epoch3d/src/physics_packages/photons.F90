@@ -474,6 +474,8 @@ CONTAINS
       CALL setup_nbw_asymmetry_table
       CALL setup_nbw_split_tables
     END IF
+    ! Phase of LCFA vacuum birefringence
+    IF (vacuum_birefringence) CALL setup_vacuum_birefringence_table
 #endif
     log_omegahat(:,1) = log_tpair(:,1)
 
@@ -575,18 +577,21 @@ CONTAINS
     REAL(num) :: dir_x, dir_y, dir_z
     REAL(num) :: eta, chi_val, part_e, gamma_rel, norm
     REAL(num) :: dtau
-    LOGICAL :: legacy_step
+    LOGICAL :: legacy_step, photon_step
 #ifdef SPIN
     REAL(num) :: dtau_avg, f_event, f_rest
     REAL(num) :: e_at_part(3), b_at_part(3), zeta, n_hat(3)
-    REAL(num) :: a_spin, x_spin
+    REAL(num) :: a_spin, x_spin, phi_vb, t_filter
     REAL(num) :: e_hat(3), ax1(3), ax2(3), xi_obs(3)
-    LOGICAL :: spin_valid, pol_valid
+    LOGICAL :: spin_valid, pol_valid, dichroic, post_filter
 #endif
 
     ! Emission handled here, one event at most per step (legacy), or
     ! inside lepton_emission_substeps
     legacy_step = use_continuous_emission .OR. .NOT. use_emission_substeps
+    ! Photons are visited for NBW and/or the vacuum-birefringence phase
+    ! (vacuum_birefringence is always F without -DSPIN)
+    photon_step = produce_pairs .OR. vacuum_birefringence
 
     DO ispecies = 1, n_species
 
@@ -718,13 +723,20 @@ CONTAINS
           current => current%next
         END DO
 
-      ! and finally photons
+      ! and finally photons: NBW (produce_pairs) and/or the phase of
+      ! LCFA vacuum birefringence. Every photon species is visited, not
+      ! only the QED photon species.
       ELSE IF (species_list(ispecies)%species_type == c_species_id_photon &
-          .AND. produce_pairs) THEN
+          .AND. photon_step) THEN
         current => species_list(ispecies)%attached_list%head
         DO WHILE(ASSOCIATED(current))
           ! Current may be deleted
           next_pt => current%next
+          ! Without energy there is no direction, chi or phase
+          IF (.NOT. current%particle_energy > 0.0_num) THEN
+            current => next_pt
+            CYCLE
+          END IF
           part_x  = current%part_pos(1) - x_grid_min_local
           part_y  = current%part_pos(2) - y_grid_min_local
           part_z  = current%part_pos(3) - z_grid_min_local
@@ -733,20 +745,16 @@ CONTAINS
           dir_y = current%part_p(2) * norm
           dir_z = current%part_p(3) * norm
           part_e  = current%particle_energy / m0 / c**2
-#ifdef SPIN
+
           ! calculate_chi also returns the fields at the photon, which
-          ! the polarisation-resolved NBW needs
+          ! the polarisation-resolved NBW and the phase need
+#ifdef SPIN
           chi_val = calculate_chi(part_x, part_y, part_z, dir_x, dir_y, &
               dir_z, part_e, e_at_part, b_at_part)
-#else
-          chi_val = calculate_chi(part_x, part_y, part_z, dir_x, dir_y, &
-              dir_z, part_e)
-#endif
-          ! Reuse the variable dtau to update photon optical depth
-          dtau = delta_optical_depth_photon(chi_val, part_e)
-#ifdef SPIN
-          ! Polarisation-dependent rate W_bar (1 - A xi1_obs)
-          IF (use_spin_qed) THEN
+          ! Observed Stokes vector on the local axes, once per photon,
+          ! for the polarised NBW rate and/or the birefringence phase
+          pol_valid = .FALSE.
+          IF (use_spin_qed .OR. vacuum_birefringence) THEN
             CALL photon_pol_frame(current%part_p, e_at_part, b_at_part, &
                 n_hat, e_hat, ax1, ax2, pol_valid)
             ! photon_polarisation = F: unpolarised rate, split and pair
@@ -755,6 +763,37 @@ CONTAINS
             xi_obs = 0.0_num
             IF (pol_valid) xi_obs = pol_stored_to_obs(ax1, ax2, e_hat, &
                 current%spin)
+          END IF
+          ! Birefringence phase over the whole step: physical time dt,
+          ! never boosted. Zero without valid axes (no field) or chi.
+          phi_vb = 0.0_num
+          IF (vacuum_birefringence .AND. pol_valid) &
+              phi_vb = vacuum_birefringence_phase(chi_val, part_e, dt)
+          ! The NBW survivor (dichroic) filter
+          dichroic = produce_pairs .AND. use_spin_qed &
+              .AND. spin_no_transition .AND. pol_valid
+#else
+          chi_val = calculate_chi(part_x, part_y, part_z, dir_x, dir_y, &
+              dir_z, part_e)
+#endif
+
+          IF (.NOT. produce_pairs) THEN
+#ifdef SPIN
+            ! Birefringence only: no optical depth, random numbers or
+            ! pairs; the phase alone (t = 0) rotates (xi_3, xi_2)
+            IF (ABS(phi_vb) > 0.0_num) &
+                current%spin = pol_obs_to_stored(ax1, ax2, e_hat, &
+                photon_no_decay_update(xi_obs, 0.0_num, phi_vb))
+#endif
+            current => next_pt
+            CYCLE
+          END IF
+
+          ! Reuse the variable dtau to update photon optical depth
+          dtau = delta_optical_depth_photon(chi_val, part_e)
+#ifdef SPIN
+          ! Polarisation-dependent rate W_bar (1 - A xi1_obs)
+          IF (use_spin_qed) THEN
             a_spin = nbw_asymmetry(chi_val)
             ! The survivor update uses the physical (unboosted) decrement
             x_spin = a_spin * dtau / boost_pairs
@@ -777,20 +816,36 @@ CONTAINS
           ! Need to think about boost_pairs
           IF (current%optical_depth < 0.0_num) THEN
 #ifdef SPIN
-            ! use_emission_substeps: the photon is a survivor until it
-            ! decays, at the fraction f of the step
-            f_rest = 0.0_num
-            IF (use_spin_qed .AND. use_emission_substeps &
-                .AND. spin_no_transition .AND. pol_valid) THEN
-              f_event = 1.0_num + current%optical_depth / dtau
-              IF (spin_nbw == c_spin_process_resolved &
+            ! The photon is a survivor until it decays, at the fraction
+            ! f_event of the step: phase and (if enabled) dichroic
+            ! filter over f_event before the event, over f_rest for a
+            ! photon kept by boost_pairs. The legacy step
+            ! (use_emission_substeps = F) puts the event at the start of
+            ! the step (f_event = 0): the pair sees the initial state,
+            ! and a kept photon gets the full phase but no filter.
+            f_event = 0.0_num
+            IF (use_emission_substeps .AND. (dichroic &
+                .OR. ABS(phi_vb) > 0.0_num)) THEN
+              ! First order: linear in the decrement. Clamped like
+              ! spin_event_fraction: a photon kept by boost_pairs can
+              ! start a step with negative depth (f < 0 before the
+              ! clamp, which applied a reversed filter before the event)
+              IF (dtau > 0.0_num) f_event = MIN(MAX(1.0_num &
+                  + current%optical_depth / dtau, 0.0_num), 1.0_num)
+              ! Second order: invert the exact two-state decrement
+              IF (use_spin_qed .AND. spin_nbw == c_spin_process_resolved &
                   .AND. spin_second_order_depth) &
                   f_event = spin_event_fraction(current%optical_depth &
                   + dtau, dtau_avg, a_spin, -xi_obs(1))
-              xi_obs = photon_no_decay_update(xi_obs, TANH(f_event * x_spin))
+              t_filter = 0.0_num
+              IF (dichroic) t_filter = TANH(f_event * x_spin)
+              xi_obs = photon_no_decay_update(xi_obs, t_filter, &
+                  f_event * phi_vb)
               current%spin = pol_obs_to_stored(ax1, ax2, e_hat, xi_obs)
-              f_rest = 1.0_num - f_event
             END IF
+            f_rest = 1.0_num - f_event
+            post_filter = dichroic .AND. use_emission_substeps &
+                .AND. f_rest > 0.0_num
             IF (use_spin_qed .AND. spin_nbw == c_spin_process_resolved) THEN
               CALL generate_pair(current, chi_val, ispecies, &
                   breit_wheeler_electron_species, &
@@ -802,22 +857,28 @@ CONTAINS
                   breit_wheeler_positron_species)
             END IF
             ! A photon kept by boost_pairs survives the rest of the step
-            ! Need to decide whether the polarisation needs to be updated
-            ! As a result of partial decay.
-            IF (ASSOCIATED(current) .AND. f_rest > 0.0_num) &
+            ! (generate_pair nullifies current when it removes it)
+            IF (ASSOCIATED(current)) THEN
+              IF (post_filter .OR. ABS(f_rest * phi_vb) > 0.0_num) THEN
+                t_filter = 0.0_num
+                IF (post_filter) t_filter = TANH(f_rest * x_spin)
                 current%spin = pol_obs_to_stored(ax1, ax2, e_hat, &
-                photon_no_decay_update(xi_obs, TANH(f_rest * x_spin)))
+                    photon_no_decay_update(xi_obs, t_filter, &
+                    f_rest * phi_vb))
+              END IF
+            END IF
 #else
             CALL generate_pair(current, chi_val, ispecies, &
                 breit_wheeler_electron_species, breit_wheeler_positron_species)
 #endif
 #ifdef SPIN
-          ELSE IF (use_spin_qed .AND. spin_no_transition .AND. pol_valid) &
-              THEN
+          ELSE IF (dichroic .OR. ABS(phi_vb) > 0.0_num) THEN
             ! No decay this step: survivor (non-transition) polarisation,
-            ! dichroism only (no birefringence table yet)
+            ! dichroism (if enabled) and birefringence over the full step
+            t_filter = 0.0_num
+            IF (dichroic) t_filter = TANH(x_spin)
             current%spin = pol_obs_to_stored(ax1, ax2, e_hat, &
-                photon_no_decay_update(xi_obs, TANH(x_spin)))
+                photon_no_decay_update(xi_obs, t_filter, phi_vb))
 #endif
           END IF
           current => next_pt

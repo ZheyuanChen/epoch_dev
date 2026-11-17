@@ -71,6 +71,15 @@ MODULE spin
   REAL(num), ALLOCATABLE :: nbw_log_chi(:), nbw_split(:)
   REAL(num), ALLOCATABLE :: nbw_cdf_par(:,:), nbw_cdf_perp(:,:)
 
+  ! LCFA vacuum birefringence (vacuum_birefringence.table): the signed
+  ! g(chi_gamma) = G / S on a uniform log10(chi_gamma) grid, where
+  ! G = Re(mu_B^2 - mu_E^2) / (alpha m^2) and
+  ! S = chi_gamma^2 / (1 + chi_gamma^(4/3)); 
+  ! chi_gamma is the standard photon parameter, twice EPOCH's chi.
+  INTEGER :: n_vb
+  REAL(num) :: vb_log_chi_min, vb_log_chi_max, vb_idlog
+  REAL(num), ALLOCATABLE :: vb_g(:)
+
 CONTAINS
 
 
@@ -545,6 +554,57 @@ CONTAINS
 
 
 
+  ! vacuum_birefringence.table: n, log10 chi_gamma min and max, then
+  ! rows log10 chi_gamma, g, G (G = g S, a format check). Rank 0 reads
+  ! and checks the table, then broadcasts it. Called only with
+  ! vacuum_birefringence = T.
+  SUBROUTINE setup_vacuum_birefringence_table
+
+    INTEGER :: i
+    REAL(num) :: log_chi, dlog, buf(2), big_g, chi_g, s_chi
+
+    IF (rank == 0) THEN
+      OPEN(unit=lu, file=TRIM(qed_table_location) &
+          // '/vacuum_birefringence.table', status='OLD')
+      READ(lu,*) n_vb, vb_log_chi_min, vb_log_chi_max
+      IF (n_vb < 3 .OR. .NOT. vb_log_chi_max > vb_log_chi_min) THEN
+        PRINT*, '*** ERROR ***'
+        PRINT*, 'vacuum_birefringence.table: bad header'
+        CALL abort_code(c_err_bad_value)
+      END IF
+      ALLOCATE(vb_g(n_vb))
+      dlog = (vb_log_chi_max - vb_log_chi_min) / (n_vb - 1)
+      DO i = 1, n_vb
+        READ(lu,*) log_chi, vb_g(i), big_g
+        chi_g = 10.0_num**log_chi
+        s_chi = chi_g**2 / (1.0_num + chi_g**(4.0_num / 3.0_num))
+        ! Uniform grid for the direct-index lookup; finite values with
+        ! the documented scaling G = g S
+        IF (ABS(log_chi - vb_log_chi_min - (i - 1) * dlog) > 1.0e-8_num &
+            .OR. .NOT. ABS(vb_g(i)) < 1.0_num &
+            .OR. .NOT. ABS(big_g - vb_g(i) * s_chi) &
+            <= 1.0e-10_num * ABS(big_g)) THEN
+          PRINT*, '*** ERROR ***'
+          PRINT*, 'vacuum_birefringence.table: bad row ', i
+          CALL abort_code(c_err_bad_value)
+        END IF
+      END DO
+      CLOSE(unit=lu)
+    END IF
+
+    CALL MPI_BCAST(n_vb, 1, MPI_INTEGER, 0, comm, errcode)
+    buf = (/ vb_log_chi_min, vb_log_chi_max /)
+    CALL MPI_BCAST(buf, 2, mpireal, 0, comm, errcode)
+    vb_log_chi_min = buf(1)
+    vb_log_chi_max = buf(2)
+    IF (rank /= 0) ALLOCATE(vb_g(n_vb))
+    CALL MPI_BCAST(vb_g, n_vb, mpireal, 0, comm, errcode)
+    vb_idlog = (n_vb - 1) / (vb_log_chi_max - vb_log_chi_min)
+
+  END SUBROUTINE setup_vacuum_birefringence_table
+
+
+
   ! Replace the T(chi) column of pairprod.table (Erber's approximation
   ! 3.3d) with the exact LCFA one from pairprod_lcfa.table
   ! (Erber 3.3b), which must share pairprod.table's
@@ -594,6 +654,7 @@ CONTAINS
     IF (ALLOCATED(nbw_split)) DEALLOCATE(nbw_split)
     IF (ALLOCATED(nbw_cdf_par)) DEALLOCATE(nbw_cdf_par)
     IF (ALLOCATED(nbw_cdf_perp)) DEALLOCATE(nbw_cdf_perp)
+    IF (ALLOCATED(vb_g)) DEALLOCATE(vb_g)
   END SUBROUTINE deallocate_spin_tables
 
 
@@ -728,6 +789,66 @@ CONTAINS
         / (1.0_num - a * xi1)
 
   END FUNCTION nbw_par_probability
+
+
+
+  FUNCTION vacuum_birefringence_g(chi) RESULT(big_g)
+
+    ! G = Re(mu_B^2 - mu_E^2) / (alpha m^2) for EPOCH's photon chi.
+    ! The only place where chi_gamma = 2 chi (calculate_chi returns
+    ! half the standard photon parameter). Signed: linear
+    ! interpolation of g = G / S in log10(chi_gamma), never of log G.
+    ! Below the table the Euler-Heisenberg limit -chi_gamma^2/(15 pi),
+    ! above it the chi_gamma^(2/3) asymptote joined to the last row
+    ! (g_last S). Zero for chi <= 0 and for non-finite chi.
+    REAL(num), INTENT(IN) :: chi
+    REAL(num) :: big_g, chi_g, x, w, s_chi
+    INTEGER :: i
+
+    big_g = 0.0_num
+    chi_g = 2.0_num * chi
+    ! Also false for NaN; +Inf is rejected by the HUGE bound
+    IF (.NOT. (chi_g > 0.0_num .AND. chi_g <= HUGE(1.0_num))) RETURN
+
+    x = LOG10(chi_g)
+    IF (x < vb_log_chi_min) THEN
+      big_g = -chi_g**2 / (15.0_num * pi)
+      RETURN
+    END IF
+    ! S = chi^2 / (1 + chi^(4/3)), written to avoid overflow; the table
+    ! starts at chi_gamma = 1e-3, so chi_g**(-4/3) is finite
+    s_chi = chi_g**(2.0_num / 3.0_num) &
+        / (1.0_num + chi_g**(-4.0_num / 3.0_num))
+    IF (x >= vb_log_chi_max) THEN
+      big_g = vb_g(n_vb) * s_chi
+    ELSE
+      w = (x - vb_log_chi_min) * vb_idlog
+      i = MIN(INT(w), n_vb - 2)
+      w = w - i
+      i = i + 1
+      big_g = ((1.0_num - w) * vb_g(i) + w * vb_g(i+1)) * s_chi
+    END IF
+
+  END FUNCTION vacuum_birefringence_g
+
+
+
+  FUNCTION vacuum_birefringence_phase(chi, energy, dt_phys) RESULT(phi)
+
+    ! phi = delta_E - delta_B, the argument of photon_no_decay_update,
+    ! accumulated by a photon of energy (in m c^2) over the physical
+    ! time dt_phys in a crossed field of EPOCH's chi:
+    ! phi = alpha dt G(2 chi) / (2 tau_c energy). Never multiplied by
+    ! boost_pairs. Zero without energy or field.
+    REAL(num), INTENT(IN) :: chi, energy, dt_phys
+    REAL(num) :: phi
+
+    phi = 0.0_num
+    IF (.NOT. (energy > 0.0_num)) RETURN
+    phi = alpha_f * dt_phys * vacuum_birefringence_g(chi) &
+        / (2.0_num * tau_c * energy)
+
+  END FUNCTION vacuum_birefringence_phase
 
 
 

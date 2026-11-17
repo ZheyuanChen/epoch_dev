@@ -690,6 +690,12 @@ MODULE shared_data
   REAL(num) :: LBW_amp_factor = 1.0_num
   INTEGER :: lbw_electron_species = -1
   INTEGER :: lbw_positron_species = -1
+  ! LCFA vacuum birefringence (qed block vacuum_birefringence, needs
+  ! -DSPIN): every photon's Stokes vector rotates each step by the
+  ! one-loop phase difference of its two local eigenmodes, from
+  ! vacuum_birefringence.table. Independent of produce_pairs and
+  ! use_spin_qed; the photon's direction and energy are unchanged.
+  LOGICAL :: vacuum_birefringence = .FALSE.
   REAL(num), PARAMETER :: tolerance_cdf       = 1.0e-6_num
   REAL(num), PARAMETER :: tolerance_cos_angle = 1.0e-6_num
 #ifdef SPIN
