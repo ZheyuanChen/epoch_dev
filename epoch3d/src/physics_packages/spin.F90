@@ -330,13 +330,14 @@ CONTAINS
         nlcs_q_p = p
         bad = n_eta < 2 .OR. n_p < 2 .OR. lmax <= lmin
         ! The lookup needs p from 0 to 1, strictly increasing
-        IF (.NOT. bad) bad = p(1) /= 0.0_num .OR. p(n_p) /= 1.0_num &
+        IF (.NOT. bad) bad = ABS(p(1)) > 1.0e-8_num &
+            .OR. ABS(p(n_p) - 1.0_num) > 1.0e-8_num &
             .OR. ANY(p(2:n_p) <= p(1:n_p-1))
       ELSE
         bad = n_eta /= nlcs_q_n_eta .OR. n_p /= nlcs_q_n_p &
             .OR. ABS(lmin - nlcs_q_log_eta_min) > 1.0e-8_num &
             .OR. ABS(lmax - nlcs_q_log_eta_max) > 1.0e-8_num
-        IF (.NOT. bad) bad = ANY(p /= nlcs_q_p)
+        IF (.NOT. bad) bad = ANY(ABS(p - nlcs_q_p) > 1.0e-8_num)
       END IF
       IF (bad) THEN
         PRINT*, '*** ERROR ***'

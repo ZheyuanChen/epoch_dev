@@ -61,7 +61,7 @@ CONTAINS
   SUBROUTINE io_deck_finalise
 
     INTEGER :: i, io, iu, n_zeros_estimate, n_dumps
-    REAL(num) :: dumps, dx
+    REAL(num) :: dumps, dx, t_run
 #ifndef NO_IO
     CHARACTER(LEN=c_max_path_length) :: list_filename
 #endif
@@ -103,6 +103,16 @@ CONTAINS
       ELSE
         dumps = 1.0_num
 
+        ! Smallest cell size; the timestep does not exceed dx / c
+        dx = (x_max - x_min) / nx_global
+        dx = MIN(dx, (y_max - y_min) / ny_global)
+        dx = MIN(dx, (z_max - z_min) / nz_global)
+
+        ! Upper bound on the simulated time. A run limited by nsteps may
+        ! leave t_end at HUGE, which would overflow the estimates below
+        t_run = t_end
+        IF (nsteps >= 0) t_run = MIN(t_end, nsteps * dx / c)
+
         DO i = 1, n_io_blocks
           IF (io_block_list(i)%disabled) CYCLE
 
@@ -136,15 +146,13 @@ CONTAINS
           END IF
 
           IF (io_block_list(i)%dt_snapshot > 0.0_num) THEN
-            dumps = MAX(dumps, t_end / io_block_list(i)%dt_snapshot)
+            dumps = MAX(dumps, t_run / io_block_list(i)%dt_snapshot)
           END IF
 
           ! This might fail if Debye length not resolved
           IF (io_block_list(i)%nstep_snapshot > 0) THEN
-            dx = (x_max - x_min) / nx_global
-            dx = MIN(dx, (y_max - y_min) / ny_global)
-            dx = MIN(dx, (z_max - z_min) / nz_global)
-            dumps = MAX(dumps, t_end * c / dx / io_block_list(i)%nstep_snapshot)
+            dumps = MAX(dumps, &
+                t_run * c / dx / io_block_list(i)%nstep_snapshot)
           END IF
         END DO
 

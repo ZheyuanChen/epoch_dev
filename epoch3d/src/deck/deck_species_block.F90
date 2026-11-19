@@ -625,7 +625,8 @@ CONTAINS
 
 #ifdef SPIN
     IF (str_cmp(element, 'spin') .OR. str_cmp(element, 'polarisation')) THEN
-      species_spin_distribution = as_spin_distribution_print(value, element, errcode)
+      species_spin_distribution = &
+          as_spin_distribution_print(value, element, errcode)
       RETURN
     END IF
 
