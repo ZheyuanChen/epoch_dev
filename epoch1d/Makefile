@@ -201,13 +201,13 @@ DEFINES := $(DEFINE)
 #DEFINES += $(D)NO_PARTICLE_PROBES
 
 # Probes will also output the time particles cross the probe
-#DEFINES += $(D)PROBE_TIME
+DEFINES += $(D)PROBE_TIME
 
 # Use second order particle weighting (default is third order).
 #DEFINES += $(D)PARTICLE_SHAPE_TOPHAT
 
 # Use fifth order particle weighting (default is third order).
-#DEFINES += $(D)PARTICLE_SHAPE_BSPLINE3
+DEFINES += $(D)PARTICLE_SHAPE_BSPLINE3
 
 # Include a unique global particle ID. The first flag defines the ID using
 # an 8-byte integer, the second uses 4-bytes.
@@ -215,13 +215,19 @@ DEFINES := $(DEFINE)
 #DEFINES += $(D)PARTICLE_ID4
 
 # Include QED routines
-#DEFINES += $(D)PHOTONS
+DEFINES += $(D)PHOTONS
 
 # Use the Trident process for pair production
 #DEFINES += $(D)TRIDENT_PHOTONS
 
 # Include bremsstrahlung routines
 #DEFINES += $(D)BREMSSTRAHLUNG
+
+# Include trident pair production in nuclear fields
+#DEFINES += $(D)BREM_TRIDENT
+
+# Include muon pair production
+#DEFINES += $(D)BREM_MUON
 
 # Use Intel-specific 'mm_prefetch' calls to load next particle in the list
 # into cache ahead of time. Gives ~10% speed-up with Intel 12 compilers.
@@ -307,7 +313,8 @@ FC_INFO := $(shell ${FC} --version 2>/dev/null \
 
 
 SRCFILES = background_collisions.F90 balance.F90 bethe_heitler.F90 \
-	boundary.F90 bremsstrahlung.F90 calc_df.F90 collisions.F90 \
+	boundary.F90 brem_muon.F90 brem_trident.F90 bremsstrahlung.F90 \
+	calc_df.F90 collisions.F90 \
 	collision_ionise.F90 constants.F90 current_smooth.F90 custom_deck.f90 \
 	custom_laser.f90 custom_parser.f90 deck.F90 deck_boundaries_block.f90 \
 	deck_bremsstrahlung_block.F90 deck_collision_block.F90 \
@@ -453,8 +460,10 @@ balance.o: balance.F90 boundary.o constants.o mpi_subtype_control.o \
 bethe_heitler.o: bethe_heitler.F90 calc_df.o partlist.o particles.o setup.o
 boundary.o: boundary.F90 injectors.o laser.o mpi_subtype_control.o \
   particle_id_hash.o particle_temperature.o partlist.o utilities.o
-bremsstrahlung.o: bremsstrahlung.F90 bethe_heitler.o calc_df.o particles.o \
-	partlist.o setup.o
+brem_trident.o: brem_trident.F90 calc_df.o partlist.o particles.o setup.o
+brem_muon.o: brem_muon.F90 calc_df.o partlist.o particles.o setup.o
+bremsstrahlung.o: bremsstrahlung.F90 bethe_heitler.o brem_muon.o \
+  brem_trident.o calc_df.o particles.o partlist.o setup.o
 calc_df.o: calc_df.F90 boundary.o
 collisions.o: collisions.F90 calc_df.o prefetch.o
 collision_ionise.o: collision_ionise.F90 calc_df.o collisions.o prefetch.o

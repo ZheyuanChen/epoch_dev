@@ -70,6 +70,12 @@ CONTAINS
 #ifdef BREMSSTRAHLUNG
     nvar = nvar+1
 #endif
+#if defined(BREMSSTRAHLUNG) && defined(BREM_TRIDENT)
+    nvar = nvar+1
+#endif
+#if defined(BREMSSTRAHLUNG) && defined(BREM_MUON)
+    nvar = nvar+1
+#endif
 #ifdef PROBE_TIME
     nvar = nvar+1
 #endif
@@ -81,6 +87,12 @@ CONTAINS
 #endif
     ! Persistent IDs
     IF (any_persistent_subset) nvar = nvar+1
+! spin (leptons) Stokes vector (photons)
+#ifdef SPIN
+    nvar = nvar+3
+#endif
+
+
 
   END SUBROUTINE set_partlist_size
 
@@ -459,6 +471,14 @@ CONTAINS
 #ifdef BREMSSTRAHLUNG
     array(cpos) = a_particle%optical_depth_bremsstrahlung
     cpos = cpos+1
+#ifdef BREM_TRIDENT 
+    array(cpos) = a_particle%optical_depth_brem_tri
+    cpos = cpos+1
+#endif
+#ifdef BREM_MUON
+    array(cpos) = a_particle%optical_depth_brem_muon
+    cpos = cpos+1
+#endif
 #endif
 #ifdef PROBE_TIME
     array(cpos) = a_particle%probe_time
@@ -481,6 +501,12 @@ CONTAINS
     array(cpos+4) = a_particle%rate_3br
     cpos = cpos+5
 #endif
+! Spin
+#ifdef SPIN
+    array(cpos:cpos+2) = a_particle%spin
+    cpos = cpos+3
+#endif
+
     IF (any_persistent_subset) THEN
       temp_i8 = id_registry%map(a_particle)
       array(cpos) = TRANSFER(temp_i8, 1.0_num)
@@ -542,6 +568,14 @@ CONTAINS
 #ifdef BREMSSTRAHLUNG
     a_particle%optical_depth_bremsstrahlung = array(cpos)
     cpos = cpos+1
+#ifdef BREM_TRIDENT
+    a_particle%optical_depth_brem_tri = array(cpos)
+    cpos = cpos+1
+#endif 
+#ifdef BREM_MUON
+    a_particle%optical_depth_brem_muon = array(cpos)
+    cpos = cpos+1
+#endif
 #endif
 #ifdef PROBE_TIME
     a_particle%probe_time = array(cpos)
@@ -563,6 +597,11 @@ CONTAINS
     a_particle%rate_rr = array(cpos+3)
     a_particle%rate_3br = array(cpos+4)
     cpos = cpos+5
+#endif
+!Spin
+#ifdef SPIN
+    a_particle%spin = array(cpos:cpos+2)
+    cpos = cpos+3
 #endif
     IF (any_persistent_subset) THEN
       CALL id_registry%add_with_map(a_particle, TRANSFER(array(cpos), temp_i8))
@@ -606,6 +645,12 @@ CONTAINS
 #ifdef BREMSSTRAHLUNG
     new_particle%optical_depth_bremsstrahlung = &
         LOG(1.0_num / (1.0_num - random()))
+#ifdef BREM_TRIDENT
+    new_particle%optical_depth_brem_tri = LOG(1.0_num / (1.0_num - random()))
+#endif
+#ifdef BREM_MUON
+    new_particle%optical_depth_brem_muon = LOG(1.0_num / (1.0_num - random()))
+#endif
 #endif
 #ifdef PROBE_TIME
     new_particle%probe_time = 0.0_num
@@ -624,6 +669,12 @@ CONTAINS
     new_particle%rate_dr = 0.0_num
     new_particle%rate_rr = 0.0_num
     new_particle%rate_3br = 0.0_num
+#endif
+! Default spin for created particles
+! Set to 0 such that newly created photons
+! are unpolarised.
+#ifdef SPIN
+    new_particle%spin = (/0.0, 0.0, 0.0/)
 #endif
 
   END SUBROUTINE init_particle

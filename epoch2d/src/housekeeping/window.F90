@@ -18,6 +18,10 @@ MODULE window
   USE boundary
   USE partlist
   USE evaluator
+#ifdef SPIN
+  USE spin
+#endif
+
 
   IMPLICIT NONE
 
@@ -313,6 +317,9 @@ CONTAINS
 #ifdef PARTICLE_DEBUG
           current%processor = rank
           current%processor_at_t0 = rank
+#endif
+#ifdef SPIN
+          CALL init_particle_spin(species, current)
 #endif
           CALL add_particle_to_partlist(append_list, current)
         END DO

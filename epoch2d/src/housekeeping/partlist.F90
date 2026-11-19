@@ -70,6 +70,12 @@ CONTAINS
 #ifdef BREMSSTRAHLUNG
     nvar = nvar+1
 #endif
+#if defined(BREMSSTRAHLUNG) && defined(BREM_TRIDENT)
+    nvar = nvar+1
+#endif
+#if defined(BREMSSTRAHLUNG) && defined(BREM_MUON)
+    nvar = nvar+1
+#endif
 #ifdef PROBE_TIME
     nvar = nvar+1
 #endif
@@ -81,6 +87,12 @@ CONTAINS
 #endif
     ! Persistent IDs
     IF (any_persistent_subset) nvar = nvar+1
+! spin (leptons) Stokes vector (photons)
+#ifdef SPIN
+    nvar = nvar+3
+#endif
+
+
 
   END SUBROUTINE set_partlist_size
 
@@ -459,6 +471,14 @@ CONTAINS
 #ifdef BREMSSTRAHLUNG
     array(cpos) = a_particle%optical_depth_bremsstrahlung
     cpos = cpos+1
+#ifdef BREM_TRIDENT 
+    array(cpos) = a_particle%optical_depth_brem_tri
+    cpos = cpos+1
+#endif
+#ifdef BREM_MUON
+    array(cpos) = a_particle%optical_depth_brem_muon
+    cpos = cpos+1
+#endif
 #endif
 #ifdef PROBE_TIME
     array(cpos) = a_particle%probe_time
@@ -481,6 +501,12 @@ CONTAINS
     array(cpos+4) = a_particle%rate_3br
     cpos = cpos+5
 #endif
+! Spin
+#ifdef SPIN
+    array(cpos:cpos+2) = a_particle%spin
+    cpos = cpos+3
+#endif
+
     IF (any_persistent_subset) THEN
       temp_i8 = id_registry%map(a_particle)
       array(cpos) = TRANSFER(temp_i8, 1.0_num)
@@ -542,6 +568,14 @@ CONTAINS
 #ifdef BREMSSTRAHLUNG
     a_particle%optical_depth_bremsstrahlung = array(cpos)
     cpos = cpos+1
+#ifdef BREM_TRIDENT
+    a_particle%optical_depth_brem_tri = array(cpos)
+    cpos = cpos+1
+#endif 
+#ifdef BREM_MUON
+    a_particle%optical_depth_brem_muon = array(cpos)
+    cpos = cpos+1
+#endif
 #endif
 #ifdef PROBE_TIME
     a_particle%probe_time = array(cpos)
@@ -563,6 +597,11 @@ CONTAINS
     a_particle%rate_rr = array(cpos+3)
     a_particle%rate_3br = array(cpos+4)
     cpos = cpos+5
+#endif
+!Spin
+#ifdef SPIN
+    a_particle%spin = array(cpos:cpos+2)
+    cpos = cpos+3
 #endif
     IF (any_persistent_subset) THEN
       CALL id_registry%add_with_map(a_particle, TRANSFER(array(cpos), temp_i8))
@@ -606,6 +645,12 @@ CONTAINS
 #ifdef BREMSSTRAHLUNG
     new_particle%optical_depth_bremsstrahlung = &
         LOG(1.0_num / (1.0_num - random()))
+#ifdef BREM_TRIDENT
+    new_particle%optical_depth_brem_tri = LOG(1.0_num / (1.0_num - random()))
+#endif
+#ifdef BREM_MUON
+    new_particle%optical_depth_brem_muon = LOG(1.0_num / (1.0_num - random()))
+#endif
 #endif
 #ifdef PROBE_TIME
     new_particle%probe_time = 0.0_num
@@ -624,6 +669,12 @@ CONTAINS
     new_particle%rate_dr = 0.0_num
     new_particle%rate_rr = 0.0_num
     new_particle%rate_3br = 0.0_num
+#endif
+! Default spin for created particles
+! Set to 0 such that newly created photons
+! are unpolarised.
+#ifdef SPIN
+    new_particle%spin = (/0.0, 0.0, 0.0/)
 #endif
 
   END SUBROUTINE init_particle
@@ -918,8 +969,8 @@ CONTAINS
 
     TYPE(particle_list) :: partlist
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
-    INTEGER(i8), ALLOCATABLE :: nid_all(:)
-    INTEGER(i8) :: nid, part_id
+    INTEGER(i8), ALLOCATABLE :: nid_all(:,:)
+    INTEGER(i8) :: nid, part_id, id_max, id_info(2)
     INTEGER :: i, id_update
     TYPE(particle), POINTER :: current
     TYPE(pointer_list) :: idlist
@@ -938,32 +989,39 @@ CONTAINS
     NULLIFY(idlist%head%part)
 
     ! Scan through particle list and identify particles which need
-    ! an ID to be assigned.
+    ! an ID to be assigned. Also find the largest existing ID, so that
+    ! IDs given elsewhere (e.g. by a file injector) are not handed out.
     nid = 0
+    id_max = 0
     current => partlist%head
     DO WHILE(ASSOCIATED(current))
       IF (current%id == 0) THEN
         nid = nid + 1
         CALL add_particle_to_list(current, idlist)
+      ELSE
+        id_max = MAX(id_max, INT(current%id, i8))
       END IF
       current => current%next
     END DO
 
-    ALLOCATE(nid_all(nproc))
+    ALLOCATE(nid_all(2,nproc))
 
-    CALL MPI_ALLGATHER(nid, 1, MPI_INTEGER8, nid_all, 1, MPI_INTEGER8, &
-        comm, errcode)
+    id_info = (/nid, id_max/)
+    CALL MPI_ALLGATHER(id_info, 2, MPI_INTEGER8, nid_all, 2, &
+        MPI_INTEGER8, comm, errcode)
+
+    particles_max_id = MAX(particles_max_id, MAXVAL(nid_all(2,:)))
 
     ! Count number of particles on ranks zero to rank-1
     nid = 0
     DO i = 1, rank
-      nid = nid + nid_all(i)
+      nid = nid + nid_all(1,i)
     END DO
     part_id = particles_max_id + nid
 
     ! Count remaining particles
     DO i = rank+1, nproc
-      nid = nid + nid_all(i)
+      nid = nid + nid_all(1,i)
     END DO
 
     particles_max_id = particles_max_id + nid
@@ -990,6 +1048,33 @@ CONTAINS
 #endif
 
   END SUBROUTINE generate_particle_ids
+
+
+
+  SUBROUTINE raise_particles_max_id
+
+    ! Raise particles_max_id to at least the largest ID held by any
+    ! particle, so that IDs read from a restart dump or a file are not
+    ! handed out again. Collective.
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+    INTEGER(i8) :: id_max
+    INTEGER :: ispecies
+    TYPE(particle), POINTER :: current
+
+    id_max = particles_max_id
+    DO ispecies = 1, n_species
+      current => species_list(ispecies)%attached_list%head
+      DO WHILE(ASSOCIATED(current))
+        id_max = MAX(id_max, INT(current%id, i8))
+        current => current%next
+      END DO
+    END DO
+
+    CALL MPI_ALLREDUCE(id_max, particles_max_id, 1, MPI_INTEGER8, &
+        MPI_MAX, comm, errcode)
+#endif
+
+  END SUBROUTINE raise_particles_max_id
 
 
 

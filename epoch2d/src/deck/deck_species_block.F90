@@ -38,6 +38,10 @@ MODULE deck_species_block
   LOGICAL :: got_name
   INTEGER :: check_block = c_err_none
   LOGICAL, DIMENSION(:), POINTER :: species_charge_set
+  ! Whether a block gave "charge"/"mass" explicitly (first pass),
+  ! kept for the second pass, where "identify" may replace them
+  LOGICAL :: species_charge_given, species_mass_given
+  LOGICAL, DIMENSION(:), POINTER :: charge_given, mass_given
   INTEGER, DIMENSION(:), POINTER :: species_ionise_limit 
   LOGICAL, DIMENSION(:), POINTER :: species_can_ionise
   LOGICAL, DIMENSION(:), POINTER :: species_can_recombine 
@@ -58,6 +62,15 @@ MODULE deck_species_block
   INTEGER :: species_atomic_number
   INTEGER, DIMENSION(2*c_ndims) :: species_bc_particle
   INTEGER :: n_species_blocks
+#ifdef SPIN
+  INTEGER, DIMENSION(:), POINTER :: spin_distribution
+  REAL(num), DIMENSION(:,:), POINTER :: spin_orientation
+  REAL(num), DIMENSION(:), POINTER :: anomalous_magnetic_moment
+  INTEGER :: species_spin_distribution
+  REAL(num), DIMENSION(3) :: species_spin_orientation
+  REAL(num) :: species_anomalous_magnetic_moment
+#endif
+
 
 CONTAINS
 
@@ -76,6 +89,7 @@ CONTAINS
       ALLOCATE(ionisation_energies(4))
       ALLOCATE(mass(4))
       ALLOCATE(charge(4))
+      ALLOCATE(charge_given(4), mass_given(4))
       ALLOCATE(atomic_number(4))
       ALLOCATE(principle(4))
       ALLOCATE(angular(4))
@@ -85,6 +99,11 @@ CONTAINS
       ALLOCATE(part_count(4))
       ALLOCATE(dumpmask_array(4))
       ALLOCATE(bc_particle_array(2*c_ndims,4))
+#ifdef SPIN
+      ALLOCATE(spin_distribution(4))
+      ALLOCATE(spin_orientation(3,4))
+      ALLOCATE(anomalous_magnetic_moment(4))
+#endif
       ALLOCATE(auto_electrons(4))
       release_species = ''
       release_species_list = ''
@@ -101,7 +120,9 @@ CONTAINS
     INTEGER :: bc
     INTEGER, DIMENSION(2*c_ndims) :: bc_species
     LOGICAL :: error
-
+#ifdef SPIN
+    REAL(num) :: spin_mag
+#endif
     IF (deck_state == c_ds_first) THEN
       n_species_blocks = n_species
       CALL set_n_species
@@ -123,6 +144,11 @@ CONTAINS
         species_list(i)%bc_particle = bc_particle_array(:,i)
         species_list(i)%ionise = species_can_ionise(i)
         species_list(i)%recombine = species_can_recombine(i)
+#ifdef SPIN
+        species_list(i)%spin_distribution = spin_distribution(i)
+        species_list(i)%spin_orientation = spin_orientation(:,i)
+        species_list(i)%anomalous_magnetic_moment = anomalous_magnetic_moment(i)
+#endif
       END DO
 
       ! Set secondary species properties
@@ -152,6 +178,11 @@ CONTAINS
       DEALLOCATE(ionise_to_species)
       DEALLOCATE(recombine_to_species)
       DEALLOCATE(species_names)
+#ifdef SPIN
+      DEALLOCATE(spin_distribution)
+      DEALLOCATE(spin_orientation)
+      DEALLOCATE(anomalous_magnetic_moment)
+#endif
 
       ! Sanity check on periodic boundaries
       DO i = 1, n_species
@@ -209,6 +240,7 @@ CONTAINS
       END DO
     ELSE
       DEALLOCATE(species_charge_set)
+      DEALLOCATE(charge_given, mass_given)
       DEALLOCATE(species_blocks)
 
       ! Sanity check
@@ -227,6 +259,127 @@ CONTAINS
         END IF
         CALL abort_code(c_err_bad_value)
       END DO
+
+#ifdef SPIN
+      ! Sanitise the spin (leptons) and polarisation (photons) settings
+      DO i = 1, n_species
+        ! Squared length of the deck vector
+        spin_mag = species_list(i)%spin_orientation(1)**2 &
+            + species_list(i)%spin_orientation(2)**2 &
+            + species_list(i)%spin_orientation(3)**2
+
+        ! Record whether the deck set anything, before the defaults below:
+        ! particles_from_file applies the species spin only in that case
+        species_list(i)%spin_given = spin_mag > 0.0_num &
+            .OR. species_list(i)%spin_distribution /= c_spin_null
+
+        IF (species_list(i)%species_type == c_species_id_photon) THEN
+          ! Photon polarisation: |P| <= 1, kept as given (not normalised);
+          ! no settings leaves c_spin_null, i.e. unpolarised (P = 0)
+          IF (species_list(i)%spin_distribution == c_spin_uniform) THEN
+            IF (rank == 0) THEN
+              DO iu = 1, nio_units ! Print to stdout and to file
+                io = io_units(iu)
+                WRITE(io,*) '*** ERROR ***'
+                WRITE(io,*) 'The photon species named "' &
+                    // TRIM(species_list(i)%name) &
+                    // '" cannot use "spin = uniform".'
+                WRITE(io,*) 'Leave the polarisation unset for an ', &
+                    'unpolarised species.'
+              END DO
+            END IF
+            CALL abort_code(c_err_bad_value)
+          ELSE IF (spin_mag > 1.0_num + 1.0e-12_num) THEN
+            ! The tolerance admits typed unit vectors such as (0.6, 0.8, 0)
+            IF (rank == 0) THEN
+              DO iu = 1, nio_units ! Print to stdout and to file
+                io = io_units(iu)
+                WRITE(io,*) '*** ERROR ***'
+                WRITE(io,*) 'The photon species named "' &
+                    // TRIM(species_list(i)%name) &
+                    // '" has a polarisation vector longer than 1.'
+              END DO
+            END IF
+            CALL abort_code(c_err_bad_value)
+          ELSE IF (spin_mag > 0.0_num) THEN
+            species_list(i)%spin_distribution = c_spin_directed
+          ELSE IF (species_list(i)%spin_distribution == c_spin_directed) THEN
+            IF (rank == 0) THEN
+              DO iu = 1, nio_units ! Print to stdout and to file
+                io = io_units(iu)
+                WRITE(io,*) '*** ERROR ***'
+                WRITE(io,*) 'The photon species named "' &
+                    // TRIM(species_list(i)%name) &
+                    // '" is missing the polarisation vector.'
+              END DO
+            END IF
+            CALL abort_code(c_err_bad_value)
+          END IF
+
+        ELSE
+          ! Leptons and other species: spin is a unit vector
+          IF (spin_mag > 0.0_num) THEN
+            IF (species_list(i)%spin_distribution == c_spin_uniform) THEN
+              IF (rank == 0) THEN
+                DO iu = 1, nio_units ! Print to stdout and to file
+                  io = io_units(iu)
+                  WRITE(io,*) '*** ERROR ***'
+                  WRITE(io,*) 'The species named "' &
+                      // TRIM(species_list(i)%name) &
+                      // '" has conflicting spin configuration.'
+                END DO
+              END IF
+              CALL abort_code(c_err_bad_value)
+            ELSE
+              species_list(i)%spin_distribution = c_spin_directed
+              spin_mag = SQRT(spin_mag)
+              species_list(i)%spin_orientation = &
+                  species_list(i)%spin_orientation / spin_mag
+            END IF
+          ELSE
+            IF (species_list(i)%spin_distribution == c_spin_directed) THEN
+              IF (rank == 0) THEN
+                DO iu = 1, nio_units ! Print to stdout and to file
+                  io = io_units(iu)
+                  WRITE(io,*) '*** ERROR ***'
+                  WRITE(io,*) 'The species named "' &
+                      // TRIM(species_list(i)%name) &
+                      // '" is missing the spin orientation.'
+                END DO
+              END IF
+              CALL abort_code(c_err_bad_value)
+            ELSE
+              species_list(i)%spin_distribution = c_spin_uniform
+            END IF
+          END IF
+        END IF
+
+        ! Neither the deck nor "identify" gave a moment. Placeholder until
+        ! the per-species policy is settled: a = 0 (g = 2), with a warning
+        ! for species that precess
+        IF (species_list(i)%anomalous_magnetic_moment &
+            <= c_anomalous_moment_unset) THEN
+          species_list(i)%anomalous_magnetic_moment = 0.0_num
+          IF (rank == 0 &
+              .AND. species_list(i)%species_type /= c_species_id_photon &
+              .AND. ABS(species_list(i)%charge) > c_tiny) THEN
+            DO iu = 1, nio_units ! Print to stdout and to file
+              io = io_units(iu)
+              WRITE(io,*) ''
+              WRITE(io,*) '*** WARNING ***'
+              WRITE(io,*) 'The species named "' &
+                  // TRIM(species_list(i)%name) &
+                  // '" has no anomalous magnetic moment.'
+              WRITE(io,*) 'Set "anomalous_magnetic_moment" or "identify";', &
+                  ' using 0 (g = 2) for spin precession.'
+              WRITE(io,*) ''
+            END DO
+          END IF
+        END IF
+      END DO
+#endif
+
+
 
       IF (track_ejected_particles) THEN
         ALLOCATE(ejected_list(n_species))
@@ -256,14 +409,21 @@ CONTAINS
     unique_electrons = .FALSE.
     n_secondary_species_in_block = 0
     n_secondary_limit = 200  ! 200 allows all ionisations from any table element
+    species_charge_given = .FALSE.
+    species_mass_given = .FALSE.
     current_block = current_block + 1
     got_name = .FALSE.
     species_dumpmask = c_io_always
     species_bc_particle = c_bc_null
+#ifdef SPIN
+    ! Reset on both passes: the per-species arrays are filled on the first
+    species_spin_distribution = c_spin_null
+    species_spin_orientation = 0.0_num
+    species_anomalous_magnetic_moment = c_anomalous_moment_unset
+#endif
     IF (deck_state == c_ds_first) RETURN
     species_id = species_blocks(current_block)
     offset = 0
-
   END SUBROUTINE species_block_start
 
 
@@ -296,6 +456,8 @@ CONTAINS
       block_species_id = n_species
       charge(n_species) = species_charge
       mass(n_species) = species_mass
+      charge_given(n_species) = species_charge_given
+      mass_given(n_species) = species_mass_given
       atomic_number(n_species) = species_atomic_number
       species_can_ionise(n_species) = use_ionise
       species_can_recombine(n_species) = use_recombine
@@ -303,6 +465,11 @@ CONTAINS
       auto_electrons(n_species) = unique_electrons
       bc_particle_array(:, n_species) = species_bc_particle
       release_species(n_species) = release_species_list
+#ifdef SPIN
+      spin_distribution(n_species) = species_spin_distribution
+      spin_orientation(:, n_species) = species_spin_orientation
+      anomalous_magnetic_moment(n_species) = species_anomalous_magnetic_moment
+#endif
     END IF
 
   END SUBROUTINE species_block_end
@@ -314,6 +481,7 @@ CONTAINS
     CHARACTER(*), INTENT(IN) :: element, value
     INTEGER :: errcode
     REAL(num) :: dmin, mult
+    REAL(num) :: deck_charge, deck_mass
     REAL(num), TARGET :: dummy(1,1)
     REAL(num), POINTER :: array(:,:)
     CHARACTER(LEN=string_length) :: filename, mult_string
@@ -399,10 +567,12 @@ CONTAINS
 
     IF (str_cmp(element, 'mass')) THEN
       species_mass = as_real_print(value, element, errcode) * m0
+      species_mass_given = .TRUE.
     END IF
 
     IF (str_cmp(element, 'charge')) THEN
       species_charge = as_real_print(value, element, errcode) * q0
+      species_charge_given = .TRUE.
     END IF
 
     IF (str_cmp(element, 'atomic_no') &
@@ -451,6 +621,34 @@ CONTAINS
       RETURN
     END IF
 
+#ifdef SPIN
+    IF (str_cmp(element, 'spin') .OR. str_cmp(element, 'polarisation')) THEN
+      species_spin_distribution = &
+          as_spin_distribution_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'spin_x') .OR. str_cmp(element, 'polarisation_x')) THEN
+      species_spin_orientation(1) = as_real_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'spin_y') .OR. str_cmp(element, 'polarisation_y')) THEN
+      species_spin_orientation(2) = as_real_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'spin_z') .OR. str_cmp(element, 'polarisation_z')) THEN
+      species_spin_orientation(3) = as_real_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'anomalous_magnetic_moment')) THEN
+      species_anomalous_magnetic_moment = as_real_print(value, element, errcode)
+      RETURN
+    END IF
+#endif
+
     IF (deck_state == c_ds_first) RETURN
 
     ! This sets up whether or not to use the MJ sampler for a species.
@@ -477,7 +675,10 @@ CONTAINS
     ! but currently only used in photon production
     ! *************************************************************
     IF (str_cmp(element, 'identify')) THEN
+      deck_charge = species_list(species_id)%charge
+      deck_mass = species_list(species_id)%mass
       CALL identify_species(value, errcode)
+      CALL warn_identify_override(value, deck_charge, deck_mass)
       RETURN
     END IF
 
@@ -1163,6 +1364,8 @@ CONTAINS
     CALL grow_array(release_species, n_species)
     CALL grow_array(mass, n_species)
     CALL grow_array(charge, n_species)
+    CALL grow_array(charge_given, n_species)
+    CALL grow_array(mass_given, n_species)
     CALL grow_array(atomic_number, n_species)
     CALL grow_array(ionisation_energies, n_species)
     CALL grow_array(principle, n_species)
@@ -1171,7 +1374,11 @@ CONTAINS
     CALL grow_array(dumpmask_array, n_species)
     CALL grow_array(auto_electrons, n_species)
     CALL grow_array(bc_particle_array, 2*c_ndims, n_species)
-
+#ifdef SPIN
+    CALL grow_array(spin_distribution, n_species)
+    CALL grow_array(spin_orientation, 3, n_species)
+    CALL grow_array(anomalous_magnetic_moment, n_species)
+#endif
     species_names(n_species) = TRIM(name)
     ionise_to_species(n_species) = -1
     recombine_to_species(n_species) = -1
@@ -1189,6 +1396,11 @@ CONTAINS
     species_can_ionise(n_species) = .FALSE.
     species_can_recombine(n_species) = .FALSE.
     species_ionise_limit(n_species) = 1000
+#ifdef SPIN
+    spin_distribution(n_species) = species_spin_distribution
+    spin_orientation(:,n_species) = species_spin_orientation
+    anomalous_magnetic_moment(n_species) = species_anomalous_magnetic_moment
+#endif
 
     RETURN
 
@@ -1830,6 +2042,15 @@ CONTAINS
             species_list(new_ion)%dumpmask = species_list(i_spec)%dumpmask
             species_list(new_ion)%bc_particle = &
                 species_list(i_spec)%bc_particle
+#ifdef SPIN
+            ! Ions down the chain share the parent block's spin settings
+            species_list(new_ion)%spin_distribution = &
+                species_list(i_spec)%spin_distribution
+            species_list(new_ion)%spin_orientation = &
+                species_list(i_spec)%spin_orientation
+            species_list(new_ion)%anomalous_magnetic_moment = &
+                species_list(i_spec)%anomalous_magnetic_moment
+#endif
             species_list(new_ion)%count = 0
             species_charge_set(new_ion) = .TRUE.
 
@@ -1866,6 +2087,10 @@ CONTAINS
               species_list(new_el)%atomic_no_set = .TRUE.
               species_list(new_el)%bc_particle = &
                   species_list(i_spec)%bc_particle
+#ifdef SPIN
+              species_list(new_el)%anomalous_magnetic_moment = &
+                  anomalous_mag_dipole_moment_electron_constant
+#endif
               species_list(new_el)%count = 0
               species_charge_set(new_el) = .TRUE.
 
@@ -1926,6 +2151,9 @@ CONTAINS
       species_list(species_id)%mass = m0
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%species_type = c_species_id_electron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_list(species_id)%electron = .TRUE.
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
@@ -1937,6 +2165,9 @@ CONTAINS
       species_list(species_id)%mass = m0 * 1836.2_num
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%species_type = c_species_id_proton
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_proton_constant)
+#endif
       species_list(species_id)%atomic_no = 1
       species_list(species_id)%atomic_no_set = .TRUE.
       RETURN
@@ -1947,6 +2178,9 @@ CONTAINS
       species_list(species_id)%mass = m0
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%species_type = c_species_id_positron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
       RETURN
@@ -1971,6 +2205,9 @@ CONTAINS
       species_list(species_id)%charge = -q0
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_electron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%electron = .TRUE.
 #if defined(PHOTONS) && defined(TRIDENT_PHOTONS)
@@ -1987,6 +2224,9 @@ CONTAINS
       species_list(species_id)%charge = -q0 
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_electron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%electron = .TRUE.
 #ifdef PHOTONS
@@ -2004,6 +2244,9 @@ CONTAINS
       species_list(species_id)%mass = m0
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%species_type = c_species_id_positron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
 #ifdef PHOTONS
       lbw_positron_species = species_id
 #endif
@@ -2018,6 +2261,9 @@ CONTAINS
       species_list(species_id)%charge = -q0
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_electron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%electron = .TRUE.
 #ifdef PHOTONS
@@ -2036,6 +2282,9 @@ CONTAINS
       species_list(species_id)%mass = m0
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%species_type = c_species_id_positron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
 #ifdef PHOTONS
       breit_wheeler_positron_species = species_id
 #endif
@@ -2049,9 +2298,51 @@ CONTAINS
       species_list(species_id)%charge = q0
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_positron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
 #if defined(PHOTONS) && defined(TRIDENT_PHOTONS)
       trident_positron_species = species_id
+#else
+      IF (use_qed .OR. use_bremsstrahlung) errcode = c_err_generic_warning
+#endif
+      species_list(species_id)%atomic_no = 0
+      species_list(species_id)%atomic_no_set = .TRUE.
+      RETURN
+    END IF
+
+    ! nuclear trident process electron
+    IF (str_cmp(value, 'brem_trident_electron')) THEN
+      species_list(species_id)%charge = -q0
+      species_list(species_id)%mass = m0
+      species_list(species_id)%species_type = c_species_id_electron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
+      species_charge_set(species_id) = .TRUE.
+      species_list(species_id)%electron = .TRUE.
+#if defined(BREMSSTRAHLUNG) && defined(BREM_TRIDENT)
+      brem_trident_electron_species = species_id
+#else
+      IF (use_qed .OR. use_bremsstrahlung) errcode = c_err_generic_warning
+#endif
+      species_list(species_id)%atomic_no = 0
+      species_list(species_id)%atomic_no_set = .TRUE.
+      RETURN
+    END IF
+
+    ! nuclear trident process positron
+    IF (str_cmp(value, 'brem_trident_positron')) THEN
+      species_list(species_id)%charge = q0
+      species_list(species_id)%mass = m0
+      species_list(species_id)%species_type = c_species_id_positron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
+      species_charge_set(species_id) = .TRUE.
+#if defined(BREMSSTRAHLUNG) && defined(BREM_TRIDENT)
+      brem_trident_positron_species = species_id
 #else
       IF (use_qed .OR. use_bremsstrahlung) errcode = c_err_generic_warning
 #endif
@@ -2098,6 +2389,9 @@ CONTAINS
       species_list(species_id)%charge = -q0
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_electron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%electron = .TRUE.
       species_list(species_id)%atomic_no = 0
@@ -2115,6 +2409,9 @@ CONTAINS
       species_list(species_id)%charge = q0
       species_list(species_id)%mass = m0
       species_list(species_id)%species_type = c_species_id_positron
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_electron_constant)
+#endif
       species_charge_set(species_id) = .TRUE.
       species_list(species_id)%atomic_no = 0
       species_list(species_id)%atomic_no_set = .TRUE.
@@ -2126,8 +2423,188 @@ CONTAINS
       RETURN
     END IF
 
+    IF (str_cmp(value, 'muon')) THEN
+      species_list(species_id)%charge = -q0
+      species_list(species_id)%mass = m_mu
+      species_list(species_id)%species_type = c_species_id_muon
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_muon_constant)
+#endif
+      species_charge_set(species_id) = .TRUE.
+      species_list(species_id)%atomic_no = 0
+      species_list(species_id)%atomic_no_set = .TRUE.
+#ifdef BREMSSTRAHLUNG
+      IF (bethe_heitler_muon_species == -1) &
+          bethe_heitler_muon_species = species_id
+#endif
+      RETURN
+    END IF
+
+    IF (str_cmp(value, 'antimuon')) THEN
+      species_list(species_id)%charge = q0
+      species_list(species_id)%mass = m_mu
+      species_list(species_id)%species_type = c_species_id_antimuon
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_muon_constant)
+#endif
+      species_charge_set(species_id) = .TRUE.
+      species_list(species_id)%atomic_no = 0
+      species_list(species_id)%atomic_no_set = .TRUE.
+#ifdef BREMSSTRAHLUNG
+      IF (bethe_heitler_antimuon_species == -1) &
+          bethe_heitler_antimuon_species = species_id
+#endif
+      RETURN
+    END IF
+
+    ! Bethe Heitler muon pairs
+    IF (str_cmp(value, 'bh_muon') &
+        .OR. str_cmp(value, 'bethe_heitler_muon')) THEN
+      species_list(species_id)%charge = -q0
+      species_list(species_id)%mass = m_mu
+      species_list(species_id)%species_type = c_species_id_muon
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_muon_constant)
+#endif
+      species_charge_set(species_id) = .TRUE.
+      species_list(species_id)%atomic_no = 0
+      species_list(species_id)%atomic_no_set = .TRUE.
+#ifdef BREMSSTRAHLUNG
+      bethe_heitler_muon_species = species_id
+#else
+      IF (use_qed .OR. use_bremsstrahlung) errcode = c_err_generic_warning
+#endif
+      RETURN
+    END IF
+
+    IF (str_cmp(value, 'bh_antimuon') &
+        .OR. str_cmp(value, 'bethe_heitler_antimuon')) THEN
+      species_list(species_id)%charge = q0
+      species_list(species_id)%mass = m_mu
+      species_list(species_id)%species_type = c_species_id_antimuon
+#ifdef SPIN
+      CALL set_identify_moment(anomalous_mag_dipole_moment_muon_constant)
+#endif
+      species_charge_set(species_id) = .TRUE.
+      species_list(species_id)%atomic_no = 0
+      species_list(species_id)%atomic_no_set = .TRUE.
+#ifdef BREMSSTRAHLUNG
+      bethe_heitler_antimuon_species = species_id
+#else
+      IF (use_qed .OR. use_bremsstrahlung) errcode = c_err_generic_warning
+#endif
+      RETURN
+    END IF
+
     errcode = IOR(errcode, c_err_bad_value)
 
   END SUBROUTINE identify_species
+
+
+
+  SUBROUTINE warn_identify_override(value, deck_charge, deck_mass)
+
+    ! "identify" runs on the second deck pass, after species_list holds the
+    ! first-pass "charge" and "mass", so it replaces them whatever their
+    ! order in the block (since v4.19.2; earlier, the last element won).
+    ! Warn when it changes a value the block gave explicitly: e.g.
+    ! "identify:proton" with "charge = 6" gives a proton. The run goes on.
+    CHARACTER(*), INTENT(IN) :: value
+    REAL(num), INTENT(IN) :: deck_charge, deck_mass
+    REAL(num) :: new_charge, new_mass
+    LOGICAL :: charge_changed, mass_changed
+    INTEGER :: io, iu
+
+    new_charge = species_list(species_id)%charge
+    new_mass = species_list(species_id)%mass
+    charge_changed = charge_given(species_id) &
+        .AND. ABS(new_charge - deck_charge) &
+        > 1.0e-10_num * MAX(ABS(new_charge), ABS(deck_charge))
+    mass_changed = mass_given(species_id) &
+        .AND. ABS(new_mass - deck_mass) &
+        > 1.0e-10_num * MAX(ABS(new_mass), ABS(deck_mass))
+
+    IF (.NOT. (charge_changed .OR. mass_changed)) RETURN
+    IF (rank /= 0) RETURN
+
+    DO iu = 1, nio_units ! Print to stdout and to file
+      io = io_units(iu)
+      WRITE(io,*) ''
+      WRITE(io,*) '*** WARNING ***'
+      WRITE(io,*) 'Input deck line number ', TRIM(deck_line_number)
+      WRITE(io,*) '"identify:' // TRIM(value) // '" in species "' &
+          // TRIM(species_list(species_id)%name) // '" replaces the'
+      WRITE(io,*) 'block''s "charge"/"mass", whatever their order:'
+      IF (charge_changed) WRITE(io,'(A,F0.4,A,F0.4)') &
+          '   charge (e):   ', deck_charge / q0, ' -> ', new_charge / q0
+      IF (mass_changed) WRITE(io,'(A,F0.4,A,F0.4)') &
+          '   mass (m_e):   ', deck_mass / m0, ' -> ', new_mass / m0
+      WRITE(io,*) 'Remove "identify" to keep the deck values.'
+      WRITE(io,*) ''
+    END DO
+
+  END SUBROUTINE warn_identify_override
+
+
+
+#ifdef SPIN
+  FUNCTION as_spin_distribution(str_in, err)
+
+    ! Convert the species-block "spin" value to a spin-distribution code.
+    ! Lives here rather than in strings.f90 because strings.f90 is not
+    ! preprocessed, so an #ifdef there has no effect.
+    CHARACTER(*), INTENT(IN) :: str_in
+    INTEGER, INTENT(INOUT) :: err
+    INTEGER :: as_spin_distribution
+
+    as_spin_distribution = c_spin_uniform
+
+    IF (str_cmp(TRIM(ADJUSTL(str_in)), 'uniform')) THEN
+      as_spin_distribution = c_spin_uniform
+      RETURN
+    END IF
+
+    IF (str_cmp(TRIM(ADJUSTL(str_in)), 'directed')) THEN
+      as_spin_distribution = c_spin_directed
+      RETURN
+    END IF
+
+    err = IOR(err, c_err_bad_value)
+
+  END FUNCTION as_spin_distribution
+
+
+
+  FUNCTION as_spin_distribution_print(str_in, element, err) RESULT(res)
+
+    CHARACTER(*), INTENT(IN) :: str_in, element
+    INTEGER, INTENT(INOUT) :: err
+    INTEGER :: res
+
+    res = as_spin_distribution(str_in, err)
+
+    IF (.NOT.print_deck_constants .OR. rank /= 0) RETURN
+
+    WRITE(du,'(A,I9)') TRIM(element) // ' = ', res
+
+  END FUNCTION as_spin_distribution_print
+
+
+
+  SUBROUTINE set_identify_moment(moment)
+
+    ! Give the current species the anomalous magnetic moment implied by
+    ! "identify", unless the deck set one explicitly. identify runs on the
+    ! second pass, after species_list holds the first-pass deck values, so
+    ! an explicit value wins whatever its order in the block.
+    REAL(num), INTENT(IN) :: moment
+
+    IF (species_list(species_id)%anomalous_magnetic_moment &
+        <= c_anomalous_moment_unset) THEN
+      species_list(species_id)%anomalous_magnetic_moment = moment
+    END IF
+
+  END SUBROUTINE set_identify_moment
+#endif
 
 END MODULE deck_species_block

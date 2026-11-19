@@ -45,12 +45,41 @@ CONTAINS
       use_radiation_reaction = .TRUE.
       produce_photons = .FALSE.
       photon_dynamics = .FALSE.
+      use_emission_substeps = .TRUE.
       use_binary_collisions = .FALSE.
       use_LBW = .FALSE.
       use_LBW_diff = .TRUE.
       LBW_amp_factor = 1.0_num
+      LBW_polarisation = .FALSE.
+      LBW_survivor_update = .TRUE.
+      LBW_pol_cross_section = .TRUE.
+      LBW_pol_angles = .TRUE.
+      LBW_pair_spin = .TRUE.
+      LBW_survivor_scheme = c_lbw_survivor_step
+      vacuum_birefringence = .FALSE.
+      use_full_landau_lifshitz = .FALSE.
+      ll_gradient_term = .TRUE.
+      ll_quadratic_term = .TRUE.
+      gaunt_factor = c_gaunt_ridgers2014
+      rr_midpoint = .FALSE.
+      rr_correction = .FALSE.
+#ifdef SPIN
+      use_spin_qed = .FALSE.
+      spin_second_order_depth = .FALSE.
+      spin_final_states = c_spin_final_collapse
+      pair_tables = c_pair_tables_unset
+      spin_no_transition = .TRUE.
+      spin_nlcs = c_spin_process_resolved
+      spin_nbw = c_spin_process_resolved
+      use_chi_dependent_moment = .TRUE.
+      use_nlcs_quantile_tables = .TRUE.
+      photon_polarisation = .TRUE.
+      radiative_spin_flip = .TRUE.
+#endif
     END IF
 #endif
+
+
 
   END SUBROUTINE qed_deck_initialise
 
@@ -78,7 +107,128 @@ CONTAINS
       END IF
     END IF
 
+    ! Check for chi-dependent anomalous moment table
+#if defined(SPIN) && defined(PHOTONS)
+    IF (rank == 0 .AND. use_qed .AND. use_chi_dependent_moment) THEN
+      INQUIRE(file=TRIM(qed_table_location)//'/anomalous_moment.table'&
+          , exist=exists)
+      IF (.NOT.exists) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'Unable to find SPIN tables in the ', &
+              'directory "' // TRIM(qed_table_location) // '"'
+        END DO
+        CALL abort_code(c_err_io_error)
+      END IF
+    END IF
+
+    ! NBW tables: the exact LCFA ones by default with use_spin_qed,
+    ! EPOCH's legacy ones otherwise
+    IF (pair_tables == c_pair_tables_unset) THEN
+      IF (use_spin_qed) THEN
+        pair_tables = c_pair_tables_lcfa
+      ELSE
+        pair_tables = c_pair_tables_legacy
+      END IF
+    END IF
+    IF (rank == 0 .AND. use_qed .AND. pair_tables == c_pair_tables_lcfa) &
+        THEN
+      CALL check_spin_table('pairprod_lcfa.table')
+      CALL check_spin_table('nbw_polarisation_asymmetry.table')
+      CALL check_spin_table('nbw_energy_split_par.table')
+      CALL check_spin_table('nbw_energy_split_perp.table')
+    END IF
+
+    ! Spin-dependent NLCS rate and photon-energy spectra
+    IF (rank == 0 .AND. use_qed .AND. use_spin_qed) THEN
+      CALL check_spin_table('nlcs_spin_asymmetry.table')
+      CALL check_spin_table('ksi_sokolov_up.table')
+      CALL check_spin_table('ksi_sokolov_down.table')
+      CALL check_spin_table('bessel_k.table')
+      CALL check_spin_table('nbw_polarisation_asymmetry.table')
+      CALL check_spin_table('nbw_energy_split_par.table')
+      CALL check_spin_table('nbw_energy_split_perp.table')
+    END IF
+
+    ! LCFA vacuum-birefringence phase
+    IF (rank == 0 .AND. use_qed .AND. vacuum_birefringence) &
+        CALL check_spin_table('vacuum_birefringence.table')
+
+    ! The NBW rate and the phase are one complex polarisation operator
+    ! only with the polarised, exact LCFA rate
+    IF (rank == 0 .AND. use_qed .AND. vacuum_birefringence &
+        .AND. produce_pairs .AND. (.NOT. use_spin_qed &
+        .OR. pair_tables /= c_pair_tables_lcfa)) THEN
+      DO iu = 1, nio_units ! Print to stdout and to file
+        io = io_units(iu)
+        WRITE(io,*)
+        WRITE(io,*) '*** WARNING ***'
+        WRITE(io,*) 'vacuum_birefringence=T with produce_pairs=T: the ', &
+            'NBW rate is consistent with the phase only with ', &
+            'use_spin_qed=T and pair_tables=lcfa.'
+      END DO
+    END IF
+#endif
+
     IF (use_qed) need_random_state = .TRUE.
+
+    ! LBW is set up with the rest of QED (setup_qed_module); without
+    ! use_qed it would silently do nothing
+    IF (use_LBW .AND. .NOT. use_qed) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** WARNING ***'
+          WRITE(io,*) 'linear_breit_wheeler=T has no effect without ', &
+              'use_qed=T. Linear Breit-Wheeler is switched off.'
+        END DO
+      END IF
+      use_LBW = .FALSE.
+    END IF
+
+    ! The birefringence phase is applied with the rest of QED; without
+    ! use_qed it would silently do nothing
+    IF (vacuum_birefringence .AND. .NOT. use_qed) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'vacuum_birefringence=T needs use_qed=T.'
+        END DO
+      END IF
+      CALL abort_code(c_err_bad_value)
+    END IF
+
+#ifndef SPIN
+    ! Photon Stokes vectors exist only with -DSPIN
+    IF (LBW_polarisation) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'Unable to set "LBW_polarisation=T" in the ', &
+              '"qed" block.'
+          WRITE(io,*) 'Please recompile with the -DSPIN preprocessor flag.'
+        END DO
+      END IF
+      CALL abort_code(c_err_pp_options_missing)
+    END IF
+
+    IF (vacuum_birefringence) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'Unable to set "vacuum_birefringence=T" in the ', &
+              '"qed" block.'
+          WRITE(io,*) 'Please recompile with the -DSPIN preprocessor flag.'
+        END DO
+      END IF
+      CALL abort_code(c_err_pp_options_missing)
+    END IF
+#endif
 
     use_binary_collisions = use_LBW
 
@@ -110,6 +260,28 @@ CONTAINS
       CALL abort_code(c_err_pp_options_missing)
     END IF
 #endif
+#if defined(SPIN) && defined(PHOTONS)
+  CONTAINS
+
+    SUBROUTINE check_spin_table(name)
+
+      CHARACTER(LEN=*), INTENT(IN) :: name
+      LOGICAL :: found
+
+      INQUIRE(file=TRIM(qed_table_location) // '/' // name, exist=found)
+      IF (.NOT.found) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'Unable to find ', name, ' in the ', &
+              'directory "' // TRIM(qed_table_location) // '"'
+        END DO
+        CALL abort_code(c_err_io_error)
+      END IF
+
+    END SUBROUTINE check_spin_table
+#endif
+
   END SUBROUTINE qed_deck_finalise
 
 
@@ -187,6 +359,36 @@ CONTAINS
       RETURN
     ENDIF
 
+    ! Classical and semiclassical emission: the field-gradient and F F u
+    ! terms of the Landau-Lifshitz force as well (tests can drop one)
+    IF (str_cmp(element, 'use_full_landau_lifshitz')) THEN
+      use_full_landau_lifshitz = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'll_gradient_term')) THEN
+      ll_gradient_term = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'll_quadratic_term')) THEN
+      ll_quadratic_term = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Classical and semiclassical emission: radiation reaction as a
+    ! midpoint kick (second order) instead of an Euler kick
+    IF (str_cmp(element, 'rr_midpoint')) THEN
+      rr_midpoint = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Fit of g(eta) for semiclassical emission
+    IF (str_cmp(element, 'gaunt_factor')) THEN
+      gaunt_factor = as_gaunt_factor(value, errcode)
+      RETURN
+    END IF
+
     IF (str_cmp(element, 'photon_sample_fraction') &
         .OR. str_cmp(element, 'photon_downsampling')) THEN
       photon_sample_fraction = as_real_print(value, element, errcode)
@@ -204,10 +406,159 @@ CONTAINS
       RETURN
     END IF
 
+    ! Emission followed event by event within a step (default), or
+    ! EPOCH's legacy step: at most one emission, overshoot discarded
+    IF (str_cmp(element, 'use_emission_substeps')) THEN
+      use_emission_substeps = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
     IF (str_cmp(element, 'amplify_LBW_factor')) THEN
       LBW_amp_factor = as_real_print(value, element, errcode)
       RETURN
     END IF
+
+    ! LBW cross-section and pair angles from both photons' Stokes
+    ! vectors
+    IF (str_cmp(element, 'LBW_polarisation') &
+        .OR. str_cmp(element, 'LBW_polarization')) THEN
+      LBW_polarisation = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Test switch: no Stokes update of partly consumed macro-photons
+    IF (str_cmp(element, 'LBW_survivor_update')) THEN
+      LBW_survivor_update = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Test switches for the other parts of polarised LBW: collisions at
+    ! the unpolarised cross-section, unpolarised pair angles,
+    ! unpolarised pairs
+    IF (str_cmp(element, 'LBW_pol_cross_section')) THEN
+      LBW_pol_cross_section = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'LBW_pol_angles')) THEN
+      LBW_pol_angles = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'LBW_pair_spin')) THEN
+      LBW_pair_spin = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! LBW survivor update of the photons that have not converted: 
+    ! a weak filter on every photon every step (default), or on 
+    ! both photons of every candidate test
+    IF (str_cmp(element, 'LBW_survivor_scheme')) THEN
+      IF (str_cmp(value, 'step')) THEN
+        LBW_survivor_scheme = c_lbw_survivor_step
+      ELSE IF (str_cmp(value, 'candidate')) THEN
+        LBW_survivor_scheme = c_lbw_survivor_candidate
+      ELSE
+        errcode = c_err_bad_value
+      END IF
+      RETURN
+    END IF
+
+    ! LCFA vacuum birefringence: the one-loop phase between the two
+    ! local eigenmodes rotates every photon's Stokes vector
+    IF (str_cmp(element, 'vacuum_birefringence')) THEN
+      vacuum_birefringence = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+#ifdef SPIN
+    IF (str_cmp(element, 'use_spin_qed') &
+        .OR. str_cmp(element, 'spin_qed')) THEN
+      use_spin_qed = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'spin_second_order_depth')) THEN
+      spin_second_order_depth = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! NBW rate and energy split: legacy (pairprod.table's Erber
+    ! approximation, energy_split.table) or lcfa (exact LCFA). The
+    ! default, set when the block is finalised, follows use_spin_qed.
+    IF (str_cmp(element, 'pair_tables')) THEN
+      IF (str_cmp(value, 'legacy')) THEN
+        pair_tables = c_pair_tables_legacy
+      ELSE IF (str_cmp(value, 'lcfa')) THEN
+        pair_tables = c_pair_tables_lcfa
+      ELSE
+        errcode = c_err_bad_value
+      END IF
+      RETURN
+    END IF
+
+    ! Final spin and photon polarisation of an event: collapse onto the
+    ! quantisation axes (default) or keep the mean
+    IF (str_cmp(element, 'spin_final_states')) THEN
+      IF (str_cmp(value, 'collapse')) THEN
+        spin_final_states = c_spin_final_collapse
+      ELSE IF (str_cmp(value, 'mean')) THEN
+        spin_final_states = c_spin_final_mean
+      ELSE
+        errcode = c_err_bad_value
+      END IF
+      RETURN
+    END IF
+
+    ! Switches for tests: the survivor (non-transition) updates, and
+    ! each process resolved, unpolarised (as with use_spin_qed = F) or
+    ! off (no events; the survivor updates still use its rate)
+    IF (str_cmp(element, 'spin_no_transition')) THEN
+      spin_no_transition = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'spin_nlcs')) THEN
+      spin_nlcs = as_spin_process(value, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'spin_nbw')) THEN
+      spin_nbw = as_spin_process(value, errcode)
+      ! photon_only exists for NLCS only
+      IF (spin_nbw == c_spin_process_photon_only) &
+          errcode = IOR(errcode, c_err_bad_value)
+      RETURN
+    END IF
+
+    ! a(chi) for leptons in T-BMT with use_qed = T (default), or the
+    ! species' constant moment (for comparison with constant-a theory)
+    IF (str_cmp(element, 'use_chi_dependent_moment') &
+        .OR. str_cmp(element, 'chi_dependent_moment')) THEN
+      use_chi_dependent_moment = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! NLCS photon energies of spin-resolved events: quantile tables
+    ! (default) or the legacy CDFs on the grid of ksi_sokolov.table
+    IF (str_cmp(element, 'use_nlcs_quantile_tables')) THEN
+      use_nlcs_quantile_tables = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    ! Validation switches: every photon unpolarised (F), and no change
+    ! of the lepton spin at an NLCS emission (F)
+    IF (str_cmp(element, 'photon_polarisation') &
+        .OR. str_cmp(element, 'photon_polarization')) THEN
+      photon_polarisation = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'radiative_spin_flip')) THEN
+      radiative_spin_flip = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+#endif
 
     errcode = c_err_unknown_element
 #endif
@@ -256,8 +607,238 @@ CONTAINS
     END IF
     use_continuous_emission = (use_continuous_emission &
                                .OR. use_classical_emission)
+
+    ! The extra Landau-Lifshitz terms act on the continuous (classical
+    ! or semiclassical) radiation reaction only
+    IF (use_qed .AND. use_full_landau_lifshitz &
+        .AND. (.NOT. use_continuous_emission &
+        .OR. .NOT. use_radiation_reaction)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'use_full_landau_lifshitz=T needs ', &
+              'use_radiation_reaction=T and classical_photon_emission=T ', &
+              'or semiclassical_photon_emission=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+    IF (use_qed .AND. rr_midpoint &
+        .AND. (.NOT. use_continuous_emission &
+        .OR. .NOT. use_radiation_reaction)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'rr_midpoint=T needs use_radiation_reaction=T ', &
+              'and classical_photon_emission=T or ', &
+              'semiclassical_photon_emission=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+    rr_correction = use_full_landau_lifshitz .OR. rr_midpoint
+
+    IF (use_qed .AND. .NOT. use_full_landau_lifshitz &
+        .AND. (.NOT. ll_gradient_term .OR. .NOT. ll_quadratic_term)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'll_gradient_term and ll_quadratic_term need ', &
+              'use_full_landau_lifshitz=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+    ! Classical emission has g = 1 whatever the fit
+    IF (use_qed .AND. use_classical_emission &
+        .AND. gaunt_factor /= c_gaunt_ridgers2014) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** WARNING ***'
+          WRITE(io,*) 'gaunt_factor has no effect with ', &
+              'classical_photon_emission=T (g = 1).'
+        END DO
+      END IF
+    END IF
+
+    IF (LBW_polarisation .AND. .NOT. use_LBW) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'LBW_polarisation=T needs linear_breit_wheeler=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+    IF (.NOT. LBW_survivor_update .AND. .NOT. LBW_polarisation) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'LBW_survivor_update needs LBW_polarisation=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+    IF (.NOT. LBW_polarisation .AND. (.NOT. LBW_pol_cross_section &
+        .OR. .NOT. LBW_pol_angles .OR. .NOT. LBW_pair_spin)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'LBW_pol_cross_section, LBW_pol_angles and ', &
+              'LBW_pair_spin need LBW_polarisation=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+#ifdef SPIN
+    ! photon_polarisation = F treats every photon as unpolarised, in
+    ! linear Breit-Wheeler too
+    IF (LBW_polarisation .AND. .NOT. photon_polarisation) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** WARNING ***'
+          WRITE(io,*) 'LBW_polarisation=T has no effect with ', &
+              'photon_polarisation=F. Linear Breit-Wheeler is unpolarised.'
+        END DO
+      END IF
+      LBW_polarisation = .FALSE.
+    END IF
+#endif
+
+#ifdef SPIN
+    ! LCFA vacuum birefringence acts on the Stokes vectors of moving
+    ! photons; photon_polarisation = F would silently disable it
+    ! (use_qed = F is rejected in qed_deck_finalise)
+    IF (vacuum_birefringence .AND. (.NOT. photon_dynamics &
+        .OR. .NOT. photon_polarisation)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'vacuum_birefringence=T needs ', &
+              'photon_dynamics=T and photon_polarisation=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+    ! Continuous emission has no discrete events to resolve spin with
+    IF (use_qed .AND. use_spin_qed .AND. use_continuous_emission) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'use_spin_qed=T cannot be combined with ', &
+              'classical or semiclassical photon emission.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+
+    ! The test switches act on the spin-resolved QED only
+    IF (use_qed .AND. .NOT. use_spin_qed .AND. (.NOT. spin_no_transition &
+        .OR. spin_nlcs /= c_spin_process_resolved &
+        .OR. spin_nbw /= c_spin_process_resolved &
+        .OR. .NOT. photon_polarisation .OR. .NOT. radiative_spin_flip)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units ! Print to stdout and to file
+          io = io_units(iu)
+          WRITE(io,*)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'spin_no_transition, spin_nlcs, spin_nbw, ', &
+              'photon_polarisation and radiative_spin_flip need ', &
+              'use_spin_qed=T.'
+          WRITE(io,*) 'Code will terminate.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+#endif
 #endif
 
   END FUNCTION qed_block_check
+
+
+
+#ifdef PHOTONS
+  FUNCTION as_gaunt_factor(str_in, err) RESULT(res)
+
+    ! Value of gaunt_factor: ridgers2014 (default) or esirkepov2015
+    CHARACTER(*), INTENT(IN) :: str_in
+    INTEGER, INTENT(INOUT) :: err
+    INTEGER :: res
+
+    res = c_gaunt_ridgers2014
+    IF (str_cmp(str_in, 'ridgers2014') .OR. str_cmp(str_in, 'ridgers')) THEN
+      res = c_gaunt_ridgers2014
+    ELSE IF (str_cmp(str_in, 'esirkepov2015') &
+        .OR. str_cmp(str_in, 'esirkepov')) THEN
+      res = c_gaunt_esirkepov2015
+    ELSE
+      err = IOR(err, c_err_bad_value)
+    END IF
+
+  END FUNCTION as_gaunt_factor
+#endif
+
+
+
+#if defined(SPIN) && defined(PHOTONS)
+  FUNCTION as_spin_process(str_in, err) RESULT(res)
+
+    ! Value of spin_nlcs and spin_nbw: resolved, unpolarised, off or
+    ! (spin_nlcs only) photon_only
+    CHARACTER(*), INTENT(IN) :: str_in
+    INTEGER, INTENT(INOUT) :: err
+    INTEGER :: res
+
+    res = c_spin_process_resolved
+    IF (str_cmp(str_in, 'resolved')) THEN
+      res = c_spin_process_resolved
+    ELSE IF (str_cmp(str_in, 'unpolarised') &
+        .OR. str_cmp(str_in, 'unpolarized')) THEN
+      res = c_spin_process_unpolarised
+    ELSE IF (str_cmp(str_in, 'off')) THEN
+      res = c_spin_process_off
+    ELSE IF (str_cmp(str_in, 'photon_only')) THEN
+      res = c_spin_process_photon_only
+    ELSE
+      err = IOR(err, c_err_bad_value)
+    END IF
+
+  END FUNCTION as_spin_process
+#endif
 
 END MODULE deck_qed_block

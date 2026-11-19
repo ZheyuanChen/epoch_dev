@@ -61,8 +61,12 @@ CONTAINS
     CHARACTER(*), INTENT(IN) :: element, value
     INTEGER :: errcode
     CHARACTER(LEN=string_length) :: filename
-    INTEGER :: err
+    INTEGER :: err, i
     LOGICAL :: got_file
+    REAL(num) :: dummy
+    CHARACTER(LEN=11), PARAMETER :: external_names(6) = (/ &
+        'ex_external', 'ey_external', 'ez_external', &
+        'bx_external', 'by_external', 'bz_external' /)
 
     errcode = c_err_none
     IF (deck_state == c_ds_first) RETURN
@@ -72,6 +76,21 @@ CONTAINS
       offset = as_long_integer_print(value, element, errcode)
       RETURN
     END IF
+
+    ! Uniform external fields, functions of time only (see shared_data)
+    DO i = 1, 6
+      IF (str_cmp(element, external_names(i))) THEN
+        IF (external_field_set(i)) &
+            CALL deallocate_stack(external_field_function(i))
+        CALL initialise_stack(external_field_function(i))
+        CALL tokenize(value, external_field_function(i), errcode)
+        ! Evaluate once to check that the expression is valid
+        dummy = evaluate(external_field_function(i), errcode)
+        external_field_set(i) = .TRUE.
+        use_external_fields = .TRUE.
+        RETURN
+      END IF
+    END DO
 
     CALL get_filename(value, filename, got_file, err)
 

@@ -666,6 +666,14 @@ CONTAINS
         CALL write_particle_variable(c_dump_part_opdepth_brem, code, &
             'Bremsstrahlung Depth', '', it_output_real)
 #endif
+#if defined(BREMSSTRAHLUNG) && defined(BREM_TRIDENT)
+        CALL write_particle_variable(c_dump_part_dep_brem_tri, code, &
+            'Nuclear Trident Depth', '', it_output_real)
+#endif
+#if defined(BREMSSTRAHLUNG) && defined(BREM_MUON)
+        CALL write_particle_variable(c_dump_part_opdep_bh_mu, code, &
+            'BH Muon Depth', '', it_output_real)
+#endif
 #ifdef WORK_DONE_INTEGRATED
         CALL write_particle_variable(c_dump_part_work_x, code, &
             'Work_x_direction', 'J', it_output_real)
@@ -692,6 +700,15 @@ CONTAINS
         CALL write_particle_variable(c_dump_part_rate_3br, code, &
             'rate_3_body_recombination', 'm^3/s', it_output_real)
 #endif
+#ifdef SPIN
+        CALL write_particle_variable(c_dump_part_spin_x, code, &
+            'Spin_x', '', it_output_real)
+        CALL write_particle_variable(c_dump_part_spin_y, code, &
+            'Spin_y', '', it_output_real)
+        CALL write_particle_variable(c_dump_part_spin_z, code, &
+            'Spin_z', '', it_output_real)
+#endif
+
         CALL write_particle_grid(code)
 
         ! These are derived variables from the particles

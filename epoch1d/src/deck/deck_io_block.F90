@@ -61,7 +61,7 @@ CONTAINS
   SUBROUTINE io_deck_finalise
 
     INTEGER :: i, io, iu, n_zeros_estimate, n_dumps
-    REAL(num) :: dumps, dx
+    REAL(num) :: dumps, dx, t_run
 #ifndef NO_IO
     CHARACTER(LEN=c_max_path_length) :: list_filename
 #endif
@@ -103,6 +103,14 @@ CONTAINS
       ELSE
         dumps = 1.0_num
 
+        ! Smallest cell size; the timestep does not exceed dx / c
+        dx = (x_max - x_min) / nx_global
+
+        ! Upper bound on the simulated time. A run limited by nsteps may
+        ! leave t_end at HUGE, which would overflow the estimates below
+        t_run = t_end
+        IF (nsteps >= 0) t_run = MIN(t_end, nsteps * dx / c)
+
         DO i = 1, n_io_blocks
           IF (io_block_list(i)%disabled) CYCLE
 
@@ -136,13 +144,13 @@ CONTAINS
           END IF
 
           IF (io_block_list(i)%dt_snapshot > 0.0_num) THEN
-            dumps = MAX(dumps, t_end / io_block_list(i)%dt_snapshot)
+            dumps = MAX(dumps, t_run / io_block_list(i)%dt_snapshot)
           END IF
 
           ! This might fail if Debye length not resolved
           IF (io_block_list(i)%nstep_snapshot > 0) THEN
-            dx = (x_max - x_min) / nx_global
-            dumps = MAX(dumps, t_end * c / dx / io_block_list(i)%nstep_snapshot)
+            dumps = MAX(dumps, &
+                t_run * c / dx / io_block_list(i)%nstep_snapshot)
           END IF
         END DO
 
@@ -589,6 +597,16 @@ CONTAINS
 #ifdef BREMSSTRAHLUNG
     ELSE IF (str_cmp(element, 'bremsstrahlung_optical_depth')) THEN
       elementselected = c_dump_part_opdepth_brem
+#endif
+
+#if defined(BREMSSTRAHLUNG) && defined(BREM_TRIDENT)
+    ELSE IF (str_cmp(element, 'brem_trident_optical_depth')) THEN
+      elementselected = c_dump_part_dep_brem_tri
+#endif
+
+#if defined(BREMSSTRAHLUNG) && defined(BREM_MUON)
+    ELSE IF (str_cmp(element, 'bh_muon_optical_depth')) THEN
+      elementselected = c_dump_part_opdep_bh_mu
 #endif
 
 #ifdef WORK_DONE_INTEGRATED
@@ -1111,6 +1129,14 @@ CONTAINS
 #ifdef BREMSSTRAHLUNG
     io_block%dumpmask(c_dump_part_opdepth_brem) = &
         IOR(io_block%dumpmask(c_dump_part_opdepth_brem), c_io_restartable)
+#endif
+#if defined(BREMSSTRAHLUNG) && defined(BREM_TRIDENT)
+    io_block%dumpmask(c_dump_part_dep_brem_tri) = &
+        IOR(io_block%dumpmask(c_dump_part_dep_brem_tri), c_io_restartable)
+#endif
+#if defined(BREMSSTRAHLUNG) && defined(BREM_MUON)
+    io_block%dumpmask(c_dump_part_opdep_bh_mu) = &
+        IOR(io_block%dumpmask(c_dump_part_opdep_bh_mu), c_io_restartable)
 #endif
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
     io_block%dumpmask(c_dump_part_id) = &

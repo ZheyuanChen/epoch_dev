@@ -366,6 +366,13 @@ CONTAINS
       NULLIFY(species_list(ispecies)%secondary_list)
       NULLIFY(species_list(ispecies)%background_density)
       species_list(ispecies)%bc_particle = c_bc_null
+#ifdef SPIN
+      species_list(ispecies)%spin_distribution = c_spin_null
+      species_list(ispecies)%spin_orientation = 0.0_num
+      species_list(ispecies)%spin_given = .FALSE.
+      species_list(ispecies)%anomalous_magnetic_moment = &
+          c_anomalous_moment_unset
+#endif
     END DO
 
     DO ispecies = 1, n_species
@@ -739,8 +746,10 @@ CONTAINS
 
     dt_solver = dt
 
-    IF (dt_plasma_frequency > c_tiny) dt = MIN(dt, dt_plasma_frequency)
-    IF (dt_laser > c_tiny) dt = MIN(dt, dt_laser)
+    IF (.NOT. ignore_dt_corrections) THEN
+      IF (dt_plasma_frequency > c_tiny) dt = MIN(dt, dt_plasma_frequency)
+      IF (dt_laser > c_tiny) dt = MIN(dt, dt_laser)
+    END IF
 
     IF (maxwell_solver /= c_maxwell_solver_yee .AND. dt < dt_solver) THEN
       IF (rank == 0) THEN
@@ -1504,6 +1513,72 @@ CONTAINS
           STOP
 #endif
 
+        ELSE IF (block_id(1:22) == 'nuclear trident depth/') THEN
+#if defined(BREMSSTRAHLUNG) && defined(BREM_TRIDENT)
+          CALL sdf_read_point_variable(sdf_handle, npart_local, &
+              species_subtypes(ispecies), it_optical_depth_brem_trident)
+#else
+          IF (rank == 0) THEN
+            PRINT*, '*** ERROR ***'
+            PRINT*, 'Cannot load dump file with nuclear trident optical depths.'
+            PRINT*, 'Please recompile with the -DBREM_TRIDENT option.'
+          END IF
+          CALL abort_code(c_err_pp_options_missing)
+          STOP
+#endif
+
+        ELSE IF (block_id(1:14) == 'bh muon depth/') THEN
+#if defined(BREMSSTRAHLUNG) && defined(BREM_MUON)
+          CALL sdf_read_point_variable(sdf_handle, npart_local, &
+              species_subtypes(ispecies), it_optical_depth_brem_muon)
+#else
+          IF (rank == 0) THEN
+            PRINT*, '*** ERROR ***'
+            PRINT*, 'Cannot load dump file with Bethe-Heitler muon pair depths.'
+            PRINT*, 'Please recompile with the -DBREM_MUON option.'
+          END IF
+          CALL abort_code(c_err_pp_options_missing)
+          STOP
+#endif
+        ELSE IF (block_id(1:7) == 'spin_x/') THEN
+#ifdef SPIN
+          CALL sdf_read_point_variable(sdf_handle, npart_local, &
+              species_subtypes(ispecies), it_spin_x)
+#else
+          IF (rank == 0) THEN
+            PRINT*, '*** ERROR ***'
+            PRINT*, 'Cannot load dump file with spin.'
+            PRINT*, 'Please recompile with the -DSPIN option.'
+          END IF
+          CALL abort_code(c_err_pp_options_missing)
+          STOP
+#endif
+        ELSE IF (block_id(1:7) == 'spin_y/') THEN
+#ifdef SPIN
+          CALL sdf_read_point_variable(sdf_handle, npart_local, &
+              species_subtypes(ispecies), it_spin_y)
+#else
+          IF (rank == 0) THEN
+            PRINT*, '*** ERROR ***'
+            PRINT*, 'Cannot load dump file with spin.'
+            PRINT*, 'Please recompile with the -DSPIN option.'
+          END IF
+          CALL abort_code(c_err_pp_options_missing)
+          STOP
+#endif
+        ELSE IF (block_id(1:7) == 'spin_z/') THEN
+#ifdef SPIN
+          CALL sdf_read_point_variable(sdf_handle, npart_local, &
+              species_subtypes(ispecies), it_spin_z)
+#else
+          IF (rank == 0) THEN
+            PRINT*, '*** ERROR ***'
+            PRINT*, 'Cannot load dump file with spin.'
+            PRINT*, 'Please recompile with the -DSPIN option.'
+          END IF
+          CALL abort_code(c_err_pp_options_missing)
+          STOP
+#endif
         ELSE IF (block_id(1:23) == 'time_integrated_work_x/') THEN
 #ifdef WORK_DONE_INTEGRATED
           CALL sdf_read_point_variable(sdf_handle, npart_local, &
@@ -2037,9 +2112,104 @@ CONTAINS
     it_optical_depth_bremsstrahlung = 0
 
   END FUNCTION it_optical_depth_bremsstrahlung
+
+
+
+#ifdef BREM_TRIDENT
+  FUNCTION it_optical_depth_brem_trident(array, npart_this_it, start, param)
+
+    REAL(num) :: it_optical_depth_brem_trident
+    REAL(num), DIMENSION(:), INTENT(IN) :: array
+    INTEGER, INTENT(INOUT) :: npart_this_it
+    LOGICAL, INTENT(IN) :: start
+    INTEGER, INTENT(IN), OPTIONAL :: param
+    INTEGER :: ipart
+
+    DO ipart = 1, npart_this_it
+      iterator_list%optical_depth_brem_tri = array(ipart)
+      iterator_list => iterator_list%next
+    END DO
+
+    it_optical_depth_brem_trident = 0
+
+  END FUNCTION it_optical_depth_brem_trident
 #endif
 
 
+
+#ifdef BREM_MUON
+  FUNCTION it_optical_depth_brem_muon(array, npart_this_it, start, param)
+
+    REAL(num) :: it_optical_depth_brem_muon
+    REAL(num), DIMENSION(:), INTENT(IN) :: array
+    INTEGER, INTENT(INOUT) :: npart_this_it
+    LOGICAL, INTENT(IN) :: start
+    INTEGER, INTENT(IN), OPTIONAL :: param
+    INTEGER :: ipart
+
+    DO ipart = 1, npart_this_it
+      iterator_list%optical_depth_brem_muon = array(ipart)
+      iterator_list => iterator_list%next
+    END DO
+
+    it_optical_depth_brem_muon = 0
+
+  END FUNCTION it_optical_depth_brem_muon
+#endif
+#endif
+
+#ifdef SPIN
+  FUNCTION it_spin_x(array, npart_this_it, start, param)
+
+    REAL(num) :: it_spin_x
+    REAL(num), DIMENSION(:), INTENT(IN) :: array
+    INTEGER, INTENT(INOUT) :: npart_this_it
+    LOGICAL, INTENT(IN) :: start
+    INTEGER, INTENT(IN), OPTIONAL :: param
+    INTEGER :: ipart
+
+    DO ipart = 1, npart_this_it
+      iterator_list%spin(1) = array(ipart)
+      iterator_list => iterator_list%next
+    END DO
+
+    it_spin_x = 0
+  END FUNCTION it_spin_x
+
+  FUNCTION it_spin_y(array, npart_this_it, start, param)
+
+    REAL(num) :: it_spin_y
+    REAL(num), DIMENSION(:), INTENT(IN) :: array
+    INTEGER, INTENT(INOUT) :: npart_this_it
+    LOGICAL, INTENT(IN) :: start
+    INTEGER, INTENT(IN), OPTIONAL :: param
+    INTEGER :: ipart
+
+    DO ipart = 1, npart_this_it
+      iterator_list%spin(2) = array(ipart)
+      iterator_list => iterator_list%next
+    END DO
+
+    it_spin_y = 0
+  END FUNCTION it_spin_y
+  
+  FUNCTION it_spin_z(array, npart_this_it, start, param)
+
+    REAL(num) :: it_spin_z
+    REAL(num), DIMENSION(:), INTENT(IN) :: array
+    INTEGER, INTENT(INOUT) :: npart_this_it
+    LOGICAL, INTENT(IN) :: start
+    INTEGER, INTENT(IN), OPTIONAL :: param
+    INTEGER :: ipart
+
+    DO ipart = 1, npart_this_it
+      iterator_list%spin(3) = array(ipart)
+      iterator_list => iterator_list%next
+    END DO
+
+    it_spin_z = 0
+  END FUNCTION it_spin_z
+#endif
 
 #ifdef WORK_DONE_INTEGRATED
   FUNCTION it_work_x_total(array, npart_this_it, start, param)

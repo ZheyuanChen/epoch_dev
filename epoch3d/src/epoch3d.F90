@@ -204,6 +204,8 @@ PROGRAM pic
     END IF
 
     push = (time >= particle_push_start_time)
+    ! Uniform external fields at this step's time, for QED and the push
+    IF (use_external_fields) CALL update_external_fields
 #ifdef PHOTONS
     IF (push .AND. use_qed .AND. time > qed_start_time) THEN
       CALL qed_update_optical_depth()

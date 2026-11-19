@@ -131,6 +131,12 @@ CONTAINS
 #endif
 #ifdef BREMSSTRAHLUNG
     found = .TRUE.
+#ifdef BREM_TRIDENT
+    found = .TRUE.
+#endif
+#ifdef BREM_MUON
+    found = .TRUE.
+#endif
 #endif
 #ifdef PREFETCH
     found = .TRUE.
@@ -240,6 +246,14 @@ CONTAINS
 #ifdef BREMSSTRAHLUNG
     defines = IOR(defines, c_def_bremsstrahlung)
     WRITE(*,*) 'Bremsstrahlung radiation -DBREMSSTRAHLUNG'
+#ifdef BREM_TRIDENT
+    defines = IOR(defines, c_def_brem_trident)
+    WRITE(*,*) 'Pair production by the nuclear trident process -DBREM_TRIDENT'
+#endif
+#ifdef BREM_MUON
+    defines = IOR(defines, c_def_brem_muon)
+    WRITE(*,*) 'Muon Bethe Heitler pair production -DBREM_MUON'
+#endif
 #endif
 #ifdef PREFETCH
     defines = IOR(defines, c_def_prefetch)
@@ -283,6 +297,10 @@ CONTAINS
     WRITE(*,*) 'Disable MPI3 features -DNO_MPI3'
 #else
     defines = IOR(defines, c_def_use_mpi3)
+#endif
+#ifdef SPIN
+    defines = IOR(defines, c_def_spin)
+    WRITE(*,*) 'Spin and polarisation -DSPIN'
 #endif
     WRITE(*,*) '*************************************************************'
 

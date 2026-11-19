@@ -1,0 +1,99 @@
+# T-BMT test 5: chi-dependent anomalous moment a(chi) (QED on).
+# gamma = 1000 electrons gyrate in a uniform B = B_s / (gamma beta) z-hat,
+# p_z = 0, so chi = gamma beta B / B_s = 1 exactly and stays constant.
+# The QED block only loads TABLES/anomalous_moment.table: emission never
+# starts (qed_start_time = 1 s), so the trajectory is the plain gyration.
+#
+# Two otherwise identical species, both with the deck moment a_e:
+#   lepton   identify:electron -> species_type electron -> a_e f(chi)
+#   generic  charge = -1, mass = 1 by hand -> c_species_id_generic -> a_e
+# Their spin minus momentum angles advance at the g-2 rates
+# -(q/m) a_e f(1) B and -(q/m) a_e B, so the rate ratio must be
+# f(1) = 0.487191 (to O(dt^2)). With gamma = 1000, a_e gamma ~ 1.2, so the
+# anomalous term is as large as the normal one.
+begin:constant
+  # omega_c dt = 0.01 at dx scale 1, 0.33 at scale 32 (run_tests.sh)
+  cell = 0.006 * micron
+  a_e = 1.1614097e-3
+  g0 = 1000.0
+  u0 = sqrt(g0^2 - 1)
+  # B_s = e_s / c with EPOCH's e_s (constants.F90)
+  b0 = 4.4140050281e9 / u0
+end:constant
+
+begin:control
+  nx = 16
+  ny = 16
+  x_min = 0
+  x_max = 16 * cell
+  y_min = 0
+  y_max = 16 * cell
+  # about two gyrations (2 pi gamma m / (e B) = 8.09 fs)
+  t_end = 16 * femto
+  stdout_frequency = 1000
+end:control
+
+begin:boundaries
+  bc_x_min = periodic
+  bc_x_max = periodic
+  bc_y_min = periodic
+  bc_y_max = periodic
+end:boundaries
+
+begin:fields
+  bz = b0
+end:fields
+
+begin:qed
+  use_qed = T
+  qed_start_time = 1.0
+  produce_photons = F
+  produce_pairs = F
+  use_radiation_reaction = F
+end:qed
+
+begin:species
+  name = lepton
+  identify:electron
+  anomalous_magnetic_moment = a_e
+  nparticles = 4
+  number_density = 1.0
+  temperature = 0
+  drift_x = u0 * me * c
+  spin = directed
+  spin_x = 1
+  spin_y = 0
+  spin_z = 0
+end:species
+
+begin:species
+  name = generic
+  charge = -1.0
+  mass = 1.0
+  anomalous_magnetic_moment = a_e
+  nparticles = 4
+  number_density = 1.0
+  temperature = 0
+  drift_x = u0 * me * c
+  spin = directed
+  spin_x = 1
+  spin_y = 0
+  spin_z = 0
+end:species
+
+begin:output
+  dt_snapshot = 0.2 * femto
+  particles = always
+  px = always
+  py = always
+  pz = always
+  spin_x = always
+  spin_y = always
+  spin_z = always
+  ex = always
+  ey = always
+  ez = always
+  bx = always
+  by = always
+  bz = always
+end:output

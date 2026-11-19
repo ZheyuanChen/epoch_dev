@@ -452,6 +452,15 @@ CONTAINS
         CALL sdf_write_srl(sdf_handle, 'file_numbers', &
             'Output File Sequence Numbers', file_numbers)
 
+#if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
+        ! IDs are never reused, including those of particles that have
+        ! left. IDs assigned later in this dump are recovered from the
+        ! particles on restart. Stored as a real (exact below 2^53):
+        ! the SDF library labels 8-byte integer arrays as 4-byte.
+        CALL sdf_write_srl(sdf_handle, 'particles_max_id', &
+            'Largest particle ID assigned', REAL(particles_max_id, num))
+#endif
+
         IF (need_random_state) THEN
           CALL get_random_state(random_state)
           ALLOCATE(random_states_per_proc(4*nproc))
@@ -657,6 +666,14 @@ CONTAINS
         CALL write_particle_variable(c_dump_part_opdepth_brem, code, &
             'Bremsstrahlung Depth', '', it_output_real)
 #endif
+#if defined(BREMSSTRAHLUNG) && defined(BREM_TRIDENT)
+        CALL write_particle_variable(c_dump_part_dep_brem_tri, code, &
+            'Nuclear Trident Depth', '', it_output_real)
+#endif
+#if defined(BREMSSTRAHLUNG) && defined(BREM_MUON)
+        CALL write_particle_variable(c_dump_part_opdep_bh_mu, code, &
+            'BH Muon Depth', '', it_output_real)
+#endif
 #ifdef WORK_DONE_INTEGRATED
         CALL write_particle_variable(c_dump_part_work_x, code, &
             'Work_x_direction', 'J', it_output_real)
@@ -683,6 +700,21 @@ CONTAINS
         CALL write_particle_variable(c_dump_part_rate_3br, code, &
             'rate_3_body_recombination', 'm^3/s', it_output_real)
 #endif
+#ifdef SPIN
+        CALL write_particle_variable(c_dump_part_spin_x, code, &
+            'Spin_x_lab', '', it_output_real)
+        CALL write_particle_variable(c_dump_part_spin_y, code, &
+            'Spin_y_lab', '', it_output_real)
+        CALL write_particle_variable(c_dump_part_spin_z, code, &
+            'Spin_z_lab', '', it_output_real)
+        CALL write_particle_variable(c_dump_part_spin_x_rf, code, &
+            'Spin_x_rf', '', it_output_real)
+        CALL write_particle_variable(c_dump_part_spin_y_rf, code, &
+            'Spin_y_rf', '', it_output_real)
+        CALL write_particle_variable(c_dump_part_spin_z_rf, code, &
+            'Spin_z_rf', '', it_output_real)
+#endif
+
         CALL write_particle_grid(code)
 
         ! These are derived variables from the particles
@@ -2434,7 +2466,7 @@ CONTAINS
 
     ! Update particle ID values if using
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
-    DO i = 1, n_species 
+    DO i = 1, n_species
       CALL generate_particle_ids(species_list(i)%attached_list)
     END DO
 #endif

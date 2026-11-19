@@ -20,6 +20,9 @@ MODULE injectors
   USE evaluator
   USE random_generator
   USE utilities
+#ifdef SPIN
+  USE spin
+#endif
   USE file_injectors
 
   IMPLICIT NONE
@@ -373,6 +376,9 @@ CONTAINS
           THEN 
         new%particle_energy = SQRT(SUM(new%part_p**2)) * c
       END IF
+#endif
+#ifdef SPIN
+        CALL init_particle_spin(species_list(injector%species), new)
 #endif
         CALL add_particle_to_partlist(plist, new)
       END DO
