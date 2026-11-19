@@ -223,7 +223,7 @@ DEFINES += $(D)SPIN
 DEFINES += $(D)PHOTONS
 
 # Use the Trident process for pair production
-DEFINES += $(D)TRIDENT_PHOTONS
+#DEFINES += $(D)TRIDENT_PHOTONS
 
 # Include bremsstrahlung routines
 DEFINES += $(D)BREMSSTRAHLUNG
