@@ -69,7 +69,7 @@ endif
 # gfortran
 # ========
 ifeq ($(strip $(COMPILER)),gfortran)
-  !FFLAGS = -O3 -g -std=f2003
+  #FFLAGS = -O3 -g -std=f2003
   FFLAGS = -O3 -g -std=f2003 -march=native -funroll-loops -ffast-math \
       -fallow-argument-mismatch
 
@@ -320,6 +320,7 @@ FC_INFO := $(shell ${FC} --version 2>/dev/null \
 
 
 SRCFILES = background_collisions.F90 balance.F90 bethe_heitler.F90 \
+	brem_polarised.F90 \
 	boundary.F90 brem_muon.F90 brem_trident.F90 bremsstrahlung.F90 \
 	calc_df.F90 collisions.F90 \
 	collision_ionise.F90 constants.F90 current_smooth.F90 custom_deck.f90 \
@@ -464,13 +465,16 @@ FORCE:
 background_collisions.o: background_collisions.F90 calc_df.o partlist.o setup.o
 balance.o: balance.F90 boundary.o constants.o mpi_subtype_control.o \
   redblack_module.o timer.o utilities.o
-bethe_heitler.o: bethe_heitler.F90 calc_df.o partlist.o particles.o setup.o
+bethe_heitler.o: bethe_heitler.F90 calc_df.o partlist.o particles.o setup.o \
+  spin.o
+brem_polarised.o: brem_polarised.F90 constants.o random_generator.o spin.o
 boundary.o: boundary.F90 injectors.o laser.o mpi_subtype_control.o \
   particle_id_hash.o particle_temperature.o partlist.o utilities.o \
   spin.o
 brem_trident.o: brem_trident.F90 calc_df.o partlist.o particles.o setup.o
 brem_muon.o: brem_muon.F90 calc_df.o partlist.o particles.o setup.o
-bremsstrahlung.o: bremsstrahlung.F90 bethe_heitler.o brem_muon.o \
+bremsstrahlung.o: bremsstrahlung.F90 bethe_heitler.o brem_polarised.o \
+  brem_muon.o \
   brem_trident.o calc_df.o particles.o partlist.o setup.o
 calc_df.o: calc_df.F90 boundary.o
 collisions.o: collisions.F90 calc_df.o prefetch.o spin.o

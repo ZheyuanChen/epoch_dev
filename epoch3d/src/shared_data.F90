@@ -696,6 +696,27 @@ MODULE shared_data
   ! vacuum_birefringence.table. Independent of produce_pairs and
   ! use_spin_qed; the photon's direction and energy are unchanged.
   LOGICAL :: vacuum_birefringence = .FALSE.
+  ! Polarisation-resolved linear Breit-Wheeler (qed block,
+  ! needs -DSPIN): the cross-section, the pair angles and the pair
+  ! spins depend on both photons' Stokes vectors.
+  ! Switches for tests, one for each part (all default T !!!!!!
+  ! all need LBW_polarisation = T):
+  ! LBW_pol_cross_section = F: collisions at the unpolarised
+  !   cross-section (and so no survivor update);
+  ! LBW_pol_angles = F: unpolarised pair angles;
+  ! LBW_pair_spin = F: the new leptons are unpolarised (spin 0);
+  ! LBW_survivor_update = F: photons that have not converted keep their
+  !   Stokes vectors.
+  ! LBW_survivor_scheme: how the photons that have not converted are
+  ! updated, c_lbw_survivor_step (weak filter on every photon every
+  ! step, the default) or c_lbw_survivor_candidate (on both photons of
+  ! every candidate test).
+  LOGICAL :: LBW_polarisation = .FALSE.
+  LOGICAL :: LBW_survivor_update = .TRUE.
+  LOGICAL :: LBW_pol_cross_section = .TRUE.
+  LOGICAL :: LBW_pol_angles = .TRUE.
+  LOGICAL :: LBW_pair_spin = .TRUE.
+  INTEGER :: LBW_survivor_scheme = c_lbw_survivor_step
   REAL(num), PARAMETER :: tolerance_cdf       = 1.0e-6_num
   REAL(num), PARAMETER :: tolerance_cos_angle = 1.0e-6_num
 #ifdef SPIN
@@ -800,6 +821,21 @@ MODULE shared_data
   LOGICAL :: use_brem_scatter = .FALSE.
   CHARACTER(LEN=string_length) :: bremsstrahlung_table_location
   LOGICAL :: use_bethe_heitler = .FALSE.
+  LOGICAL :: bh_spin_transfer = .FALSE.
+  LOGICAL :: brem_spin_polarisation = .FALSE.
+  REAL(num) :: brem_spin_energy_min = 1.0e6_num * q0
+#ifdef SPIN
+  ! BH pair polarisation switches (bremsstrahlung block; they need
+  ! bh_spin_transfer = T). spin_bh: c_spin_process_resolved, _unpolarised
+  ! (lepton spins as for an unpolarised photon) or _off (no lepton spins).
+  ! bh_spin_screening = F sets psi_2 = psi_1 in the spin kernel (the
+  ! unscreened T(x)); bh_spin_correlation = F collapses the two helicities
+  ! independently (C_zz = 0); bh_pol_azimuth = F keeps the uniform pair
+  ! azimuth for linearly polarised photons.
+  INTEGER :: spin_bh = c_spin_process_resolved
+  LOGICAL :: bh_spin_screening = .TRUE., bh_spin_correlation = .TRUE.
+  LOGICAL :: bh_pol_azimuth = .TRUE.
+#endif
   LOGICAL :: use_brem_trident = .FALSE.
   LOGICAL :: use_brem_muon = .FALSE.
   LOGICAL :: positron_brem = .FALSE.

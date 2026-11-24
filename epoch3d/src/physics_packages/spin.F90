@@ -1325,6 +1325,81 @@ CONTAINS
   END SUBROUTINE reference_axis
 
 
+
+  FUNCTION spin_rest_to_lab(spin, u) RESULT(a)
+    ! Transform the spin 4-vector from the rest frame to the lab frame
+    ! by a pure Lorentz boost. Used by the output block.
+
+    ! Let s = (0, S) be the spin 4-vector in the rest frame where S
+    ! is the spatial 3-vector. Then one can show that the spin 4-vector
+    ! in the lab frame is given by a = (a^0, A) where
+    ! a^0 = u.S and A = S + (u.S) u / (1+gamma) where
+    ! u = p/mc and gamma = 1+u.u
+
+    ! The rationale of defining gamma this way is to avoid dividing by
+    ! a very small number and u is commonly used in EPOCH.
+
+    ! Note that this gamma is the same as the Lorentz factor seen in most
+    ! physics notebooks -- u = p/mc = gamma_physics * beta where beta=v/c
+    ! is the usual physical beta. From here on we can show
+    ! gamma = gamma_physics and a indeed is obtained by a pure Lorentz
+    ! boost from s (A_parallel = gamma S_parallel and
+    ! A_perp = S_perp).
+
+    ! Inverse: S = A - (u.A) u / (gamma (gamma + 1)).
+
+    ! The function only returns the spatial part (A) as the time-component
+    ! is not needed.
+    REAL(num), INTENT(IN) :: spin(3), u(3)
+    REAL(num) :: a(3)
+
+    a = spin + DOT_PRODUCT(u, spin) &
+        / (SQRT(1.0_num + DOT_PRODUCT(u, u)) + 1.0_num) * u
+
+  END FUNCTION spin_rest_to_lab
+
+
+
+  FUNCTION photon_pol_cartesian(p_photon, xi_stored) RESULT(v)
+
+    ! Photon polarisation as a lab vector (output only), from the Stokes
+    ! vector stored on the reference axes (r1, r2) of reference_axis:
+    !   v = P_lin e_lin + xi_2 n,   P_lin = sqrt(xi_1^2 + xi_3^2).
+    ! e_lin = cos(psi) r1 + sin(psi) r2 is the axis of the linear part,
+    ! with (xi_1, xi_3) = P_lin (cos 2psi, -sin 2psi), the convention of
+    ! pol_obs_to_stored (a state along E_hat has xi_obs = (1, 0, 0)).
+    ! A linear axis has no direction, so e_lin is chosen with its largest
+    ! component positive. xi_2 = +1 is positive helicity, so xi_2 n is
+    ! the photon's spin. |v| is the degree of polarisation, and
+    ! (xi_1, xi_2, xi_3) follow back from v and n. v = 0 without
+    ! momentum.
+    REAL(num), INTENT(IN) :: p_photon(3), xi_stored(3)
+    REAL(num) :: v(3), n(3), r1(3), r2(3), e_lin(3)
+    REAL(num) :: scale, p_lin, c2, cpsi, spsi
+
+    v = 0.0_num
+    ! Scaling avoids squaring the very small SI photon momenta
+    scale = MAXVAL(ABS(p_photon))
+    IF (scale <= TINY(1.0_num)) RETURN
+    n = p_photon / scale
+    n = n / SQRT(DOT_PRODUCT(n, n))
+
+    p_lin = SQRT(xi_stored(1)**2 + xi_stored(3)**2)
+    IF (p_lin > TINY(1.0_num)) THEN
+      CALL reference_axis(n, r1, r2)
+      ! Half angles of cos 2psi = xi_1 / P_lin, sin 2psi = -xi_3 / P_lin
+      c2 = MIN(MAX(xi_stored(1) / p_lin, -1.0_num), 1.0_num)
+      cpsi = SQRT(0.5_num * (1.0_num + c2))
+      spsi = SIGN(SQRT(0.5_num * (1.0_num - c2)), -xi_stored(3))
+      e_lin = cpsi * r1 + spsi * r2
+      IF (e_lin(MAXLOC(ABS(e_lin), 1)) < 0.0_num) e_lin = -e_lin
+      v = p_lin * e_lin
+    END IF
+    v = v + xi_stored(2) * n
+
+  END FUNCTION photon_pol_cartesian
+
+
   FUNCTION pol_stored_to_obs(r1, r2, e_hat, xi_stored) RESULT(xi_obs)
 
     REAL(num), INTENT(IN) :: r1(3), r2(3), e_hat(3), xi_stored(3)
@@ -1363,6 +1438,48 @@ CONTAINS
     xi_stored(3) = -s2w*xi_obs(1) + c2w*xi_obs(3)
 
   END FUNCTION pol_obs_to_stored
+
+
+
+  SUBROUTINE photon_cm_axes(p_photon, beta_b, gamma_b, n_cm, r1, r2)
+
+    ! Reference axes of a photon's stored Stokes vector (reference_axis
+    ! on its lab direction) carried to the frame that moves with
+    ! velocity beta_b c (Lorentz factor gamma_b), where the photon moves
+    ! along the unit vector n_cm. Used for linear Breit-Wheeler in the
+    ! centre-of-momentum frame. The axis r, as the polarisation
+    ! 4-vector (0, r), is boosted and then shifted along the photon
+    ! 4-momentum back to a zero time component (gauge invariance):
+    !   r' = r + gamma_b^2 / (gamma_b + 1) (beta_b . r) beta_b
+    !          + gamma_b (beta_b . r) n_cm.
+    ! This includes the rotation of the polarisation by the boost; a
+    ! projection of r onto the plane normal to n_cm does not. The
+    ! amplitude is Lorentz invariant, so the Stokes vector has the same
+    ! components on (r1', r2') as on the lab axes. r1' is
+    ! re-orthonormalised against round-off and r2' = n_cm x r1', so
+    ! (r1', r2', n_cm) is right-handed. beta_b = 0 gives the lab axes.
+    REAL(num), INTENT(IN) :: p_photon(3), beta_b(3), gamma_b, n_cm(3)
+    REAL(num), INTENT(OUT) :: r1(3), r2(3)
+    REAL(num) :: n(3), a1(3), a2(3), scale, br
+
+    r1 = 0.0_num
+    r2 = 0.0_num
+    ! Scaling avoids squaring the very small SI photon momenta
+    scale = MAXVAL(ABS(p_photon))
+    IF (scale <= TINY(1.0_num)) RETURN
+    n = p_photon / scale
+    n = n / SQRT(DOT_PRODUCT(n, n))
+    CALL reference_axis(n, a1, a2)
+
+    br = DOT_PRODUCT(beta_b, a1)
+    r1 = a1 + gamma_b * br * (gamma_b / (gamma_b + 1.0_num) * beta_b + n_cm)
+    r1 = r1 - DOT_PRODUCT(r1, n_cm) * n_cm
+    r1 = r1 / SQRT(DOT_PRODUCT(r1, r1))
+    r2 = (/ n_cm(2)*r1(3) - n_cm(3)*r1(2), &
+            n_cm(3)*r1(1) - n_cm(1)*r1(3), &
+            n_cm(1)*r1(2) - n_cm(2)*r1(1) /)
+
+  END SUBROUTINE photon_cm_axes
 
 
   SUBROUTINE nlcs_final_states(ux, uy, uz, gamma_rel, e_field, b_field, &

@@ -144,6 +144,15 @@ MODULE constants
 
 #endif
 
+  ! Survivor update of polarised linear Breit-Wheeler (qed block
+  ! LBW_survivor_scheme): a weak filter on every photon every step, or
+  ! a Kraus update of both photons of every candidate test
+  INTEGER, PARAMETER :: c_lbw_survivor_step = 1
+  INTEGER, PARAMETER :: c_lbw_survivor_candidate = 2
+  ! Polarised LBW pair angles: the largest expected number of rejection
+  ! draws; a pair that needs more keeps the unpolarised angles
+  REAL(num), PARAMETER :: lbw_max_angle_draws = 1.0e3_num
+
 
   ! Frequency function type codes
   INTEGER, PARAMETER :: c_of_omega = 1
@@ -284,6 +293,11 @@ MODULE constants
       * (q0 / c)**2
   REAL(num), PARAMETER :: sigma_lBW_max = pi * classical_re**2 * &
           0.6817055055017870382984600045421994441648264608312_num
+  ! Largest polarised linear Breit-Wheeler cross-section:
+  ! the maximum over C of sigma_0 + max(|sigma_L|,
+  ! |sigma_C|), reached by photons of equal helicity at C = 1.2645
+  REAL(num), PARAMETER :: sigma_lBW_pol_max = pi * classical_re**2 * &
+          0.90906044189278891464_num
   REAL(num), PARAMETER :: inv_c = 1.0_num / c
   REAL(num), PARAMETER :: inv_mc0_sq = 1.0_num / mc0 / mc0
   REAL(num), PARAMETER :: half_pire2 = 0.5_num * pi * classical_re**2
@@ -725,12 +739,17 @@ MODULE constants
   INTEGER, PARAMETER :: c_dump_part_rate_3br     = 78
   INTEGER, PARAMETER :: c_dump_part_dep_brem_tri = 79
   INTEGER, PARAMETER :: c_dump_part_opdep_bh_mu  = 80
-  ! Spin: how many parameters to dump??? Say 3 first
-  INTEGER, PARAMETER :: c_dump_part_spin_x  = 81
-  INTEGER, PARAMETER :: c_dump_part_spin_y  = 82
-  INTEGER, PARAMETER :: c_dump_part_spin_z  = 83
+  ! Spin: spin_x/y/z are the lab-frame spin (leptons) or the Cartesian
+  ! polarisation vector (photons); spin_{x,y,z}_rf the stored vector
+  ! (rest-frame spin, or Stokes vector on the reference axes).
+  INTEGER, PARAMETER :: c_dump_part_spin_x       = 81
+  INTEGER, PARAMETER :: c_dump_part_spin_y       = 82
+  INTEGER, PARAMETER :: c_dump_part_spin_z       = 83
+  INTEGER, PARAMETER :: c_dump_part_spin_x_rf    = 84
+  INTEGER, PARAMETER :: c_dump_part_spin_y_rf    = 85
+  INTEGER, PARAMETER :: c_dump_part_spin_z_rf    = 86
   ! The following line needs to be changed as well!
-  INTEGER, PARAMETER :: num_vars_to_dump         = 83
+  INTEGER, PARAMETER :: num_vars_to_dump         = 86
 
 
 

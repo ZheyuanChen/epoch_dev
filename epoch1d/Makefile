@@ -214,6 +214,11 @@ DEFINES += $(D)PARTICLE_SHAPE_BSPLINE3
 #DEFINES += $(D)PARTICLE_ID
 #DEFINES += $(D)PARTICLE_ID4
 
+# Include the lepton spin and photon polarisation.
+# Consider separating QED and non-QED implementation?
+# Under construction!
+DEFINES += $(D)SPIN
+
 # Include QED routines
 DEFINES += $(D)PHOTONS
 
@@ -221,7 +226,7 @@ DEFINES += $(D)PHOTONS
 #DEFINES += $(D)TRIDENT_PHOTONS
 
 # Include bremsstrahlung routines
-#DEFINES += $(D)BREMSSTRAHLUNG
+DEFINES += $(D)BREMSSTRAHLUNG
 
 # Include trident pair production in nuclear fields
 #DEFINES += $(D)BREM_TRIDENT
@@ -313,6 +318,7 @@ FC_INFO := $(shell ${FC} --version 2>/dev/null \
 
 
 SRCFILES = background_collisions.F90 balance.F90 bethe_heitler.F90 \
+	brem_polarised.F90 \
 	boundary.F90 brem_muon.F90 brem_trident.F90 bremsstrahlung.F90 \
 	calc_df.F90 collisions.F90 \
 	collision_ionise.F90 constants.F90 current_smooth.F90 custom_deck.f90 \
@@ -331,7 +337,7 @@ SRCFILES = background_collisions.F90 balance.F90 bethe_heitler.F90 \
 	particles.F90 partlist.F90 photons.F90 prefetch.F90 probes.F90 \
 	random_generator.f90 recombination.F90 redblack_module.f90 \
 	secondary_list.F90 setup.F90 shape_functions.F90 shared_data.F90 shunt.F90 \
-	simple_io.F90 stack.f90 strings.f90 strings_advanced.f90 \
+	simple_io.F90 spin.F90 stack.f90 strings.f90 strings_advanced.f90 \
 	terminal_controls.F90 timer.f90 tokenizer_blocks.f90 utilities.f90 \
 	version_data.F90 welcome.F90 window.F90
 
@@ -457,15 +463,19 @@ FORCE:
 background_collisions.o: background_collisions.F90 calc_df.o partlist.o setup.o
 balance.o: balance.F90 boundary.o constants.o mpi_subtype_control.o \
   redblack_module.o timer.o utilities.o
-bethe_heitler.o: bethe_heitler.F90 calc_df.o partlist.o particles.o setup.o
+bethe_heitler.o: bethe_heitler.F90 calc_df.o partlist.o particles.o setup.o \
+  spin.o
+brem_polarised.o: brem_polarised.F90 constants.o random_generator.o spin.o
 boundary.o: boundary.F90 injectors.o laser.o mpi_subtype_control.o \
-  particle_id_hash.o particle_temperature.o partlist.o utilities.o
+  particle_id_hash.o particle_temperature.o partlist.o utilities.o \
+  spin.o
 brem_trident.o: brem_trident.F90 calc_df.o partlist.o particles.o setup.o
 brem_muon.o: brem_muon.F90 calc_df.o partlist.o particles.o setup.o
-bremsstrahlung.o: bremsstrahlung.F90 bethe_heitler.o brem_muon.o \
+bremsstrahlung.o: bremsstrahlung.F90 bethe_heitler.o brem_polarised.o \
+  brem_muon.o \
   brem_trident.o calc_df.o particles.o partlist.o setup.o
 calc_df.o: calc_df.F90 boundary.o
-collisions.o: collisions.F90 calc_df.o prefetch.o
+collisions.o: collisions.F90 calc_df.o prefetch.o spin.o
 collision_ionise.o: collision_ionise.F90 calc_df.o collisions.o prefetch.o
 constants.o: constants.F90 $(SDFMOD)
 current_smooth.o: current_smooth.F90 boundary.o constants.o shape_functions.o
@@ -520,19 +530,20 @@ epoch1d.o: epoch1d.F90 background_collisions.o balance.o bremsstrahlung.o \
 	$(FC) -c $(FFLAGS) $(FLTCONS) -o $(OBJDIR)/$@ $(PREPROFLAGS) $<
 evaluate.o: evaluate.F90 shunt.o stack.o
 evaluator_blocks.o: evaluator_blocks.F90 custom_parser.o stack.o strings.o
-fields.o: fields.f90 boundary.o
+fields.o: fields.f90 boundary.o evaluate.o
 	$(FC) -c $(FFLAGS) $(FLTCONS) -o $(OBJDIR)/$@ $(PREPROFLAGS) $<
-file_injectors.o: file_injectors.F90 partlist.o utilities.o
+file_injectors.o: file_injectors.F90 partlist.o utilities.o spin.o
 finish.o: finish.f90 background_collisions.o collisions.o constants.o deck.o \
 	diagnostics.o dist_fn.o injectors.o ionise.o laser.o probes.o setup.o window.o
-helper.o: helper.F90 balance.o boundary.o deltaf_loader.o partlist.o simple_io.o
+helper.o: helper.F90 balance.o boundary.o deltaf_loader.o partlist.o simple_io.o \
+  spin.o
 ic_module.o: ic_module.f90 helper.o shared_data.o
 injectors.o: injectors.F90 evaluate.o file_injectors.o particle_temperature.o \
-	partlist.o random_generator.o utilities.o
+	partlist.o random_generator.o spin.o utilities.o
 ionise.o: ionise.F90 boundary.o calc_df.o numerics.o partlist.o \
-  random_generator.o utilities.o
+  random_generator.o spin.o utilities.o
 iterators.o: iterators.F90 particle_id_hash.o particle_pointer_advance.o \
-  partlist.o
+  partlist.o spin.o
 laser.o: laser.f90 custom_laser.o evaluate.o
 mpi_routines.o: mpi_routines.F90 helper.o
 mpi_subtype_control.o: mpi_subtype_control.f90 shared_data.o
@@ -543,9 +554,9 @@ particle_migration.o: particle_migration.F90 calc_df.o partlist.o prefetch.o
 particle_pointer_advance.o: particle_pointer_advance.f90 shared_data.o
 particle_temperature.o: particle_temperature.F90 constants.o evaluate.o \
   random_generator.o
-particles.o: particles.F90 boundary.o partlist.o prefetch.o
+particles.o: particles.F90 boundary.o partlist.o prefetch.o spin.o
 partlist.o: partlist.F90 particle_id_hash.o random_generator.o shared_data.o
-photons.o: photons.F90 collisions.o partlist.o utilities.o
+photons.o: photons.F90 collisions.o partlist.o utilities.o spin.o
 prefetch.o: prefetch.F90 shared_data.o
 probes.o: probes.F90 partlist.o $(SDFMOD)
 random_generator.o: random_generator.f90
@@ -559,6 +570,7 @@ shape_functions.o: shape_functions.F90 constants.o
 shared_data.o: shared_data.F90 constants.o $(SDFMOD)
 shunt.o: shunt.F90 evaluator_blocks.o tokenizer_blocks.o utilities.o
 simple_io.o: simple_io.F90 boundary.o mpi_subtype_control.o
+spin.o: spin.F90 random_generator.o shared_data.o utilities.o
 stack.o: stack.f90 constants.o
 strings.o: strings.f90 shared_data.o
 strings_advanced.o: strings_advanced.f90 evaluate.o shunt.o
@@ -568,4 +580,4 @@ tokenizer_blocks.o: tokenizer_blocks.f90 strings.o
 utilities.o: utilities.f90 constants.o shared_data.o
 version_data.o: version_data.F90 $(SRCDIR)/COMMIT
 welcome.o: welcome.F90 shared_data.o terminal_controls.o version_data.o
-window.o: window.F90 boundary.o evaluate.o partlist.o
+window.o: window.F90 boundary.o evaluate.o partlist.o spin.o
