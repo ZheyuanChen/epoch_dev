@@ -360,9 +360,12 @@ CONTAINS
 #endif
       errcode_deck = IOR(errcode_deck, qed_block_check())
     END IF
-    IF (use_bremsstrahlung) THEN
 #ifdef BREMSSTRAHLUNG
-      errcode_deck = IOR(errcode_deck, check_bremsstrahlung_variables())
+    IF (use_bremsstrahlung .OR. bh_spin_transfer) THEN
+      IF (use_bremsstrahlung) &
+          errcode_deck = IOR(errcode_deck, check_bremsstrahlung_variables())
+#else
+    IF (use_bremsstrahlung) THEN
 #endif
       errcode_deck = IOR(errcode_deck, bremsstrahlung_block_check())
     END IF
