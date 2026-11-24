@@ -22,6 +22,9 @@ MODULE bremsstrahlung
   USE bethe_heitler
   USE brem_trident
   USE brem_muon
+#ifdef SPIN
+  USE brem_polarised
+#endif
 
   IMPLICIT NONE
 
@@ -99,8 +102,9 @@ CONTAINS
     ! No special species required if bremsstrahlung is turned off
     IF (.NOT.use_bremsstrahlung) RETURN
 
-    ! No special species required if we only do radiation reaction
-    IF (.NOT.produce_bremsstrahlung_photons) RETURN
+    ! BH still needs pair species with external photons and no brem photons.
+    IF (.NOT.produce_bremsstrahlung_photons &
+        .AND. .NOT.use_bethe_heitler) RETURN
 
     ! Identify if there exists any electron or positron species
     DO ispecies = 1, n_species
@@ -126,7 +130,9 @@ CONTAINS
     END DO
 
     ! Print warning if there is no electron species
-    IF (first_electron < 0 .AND. (first_positron < 0 .AND. positron_brem)) THEN
+    IF (first_electron < 0 .AND. (use_bethe_heitler &
+        .OR. (produce_bremsstrahlung_photons &
+        .AND. (.NOT.positron_brem .OR. first_positron < 0)))) THEN
       IF (rank == 0) THEN
         DO iu = 1, nio_units
           io = io_units(iu)
@@ -204,7 +210,8 @@ CONTAINS
     END IF
 
     ! Check if there exists a species to populate with bremsstrahlung photons
-    IF (bremsstrahlung_photon_species < 0) THEN
+    IF (produce_bremsstrahlung_photons &
+        .AND. bremsstrahlung_photon_species < 0) THEN
       IF (rank == 0) THEN
         DO iu = 1, nio_units
           io = io_units(iu)
@@ -490,6 +497,10 @@ CONTAINS
     ! Initialise Z-dependent Bethe-Heitler functions using this Z list
     IF (use_bethe_heitler) &
         CALL init_bethe_heitler(size_brem_array, z_values, z_to_index)
+#ifdef SPIN
+    IF (brem_spin_polarisation) &
+        CALL bh_brem_setup(z_values, brem_spin_energy_min)
+#endif
 
     ! Initialise Z-dependent muon pair-production functions using this Z list
 #ifdef BREM_MUON
@@ -734,10 +745,18 @@ CONTAINS
 
     ! Switch to interpolate cross section value for correct particle type
     IF (spec == c_species_id_electron) THEN
+#ifdef SPIN
+      IF (brem_spin_polarisation .AND. bh_brem_active(part_e)) THEN
+        cross_sec_val = bh_brem_rate(part_e, z)
+      ELSE
+#endif
       cross_sec_val = find_value_from_table_1d(part_e, &
           brem_array(brem_index)%size_t, brem_array(brem_index)%e_table, &
           brem_array(brem_index)%cross_section, brem_array(brem_index)%state) &
           * plasma_factor
+#ifdef SPIN
+      END IF
+#endif
     ELSE IF (spec == c_species_id_positron) THEN
       cross_sec_val = find_value_from_table_1d(part_e, &
           brem_array(brem_index)%size_t, brem_array(brem_index)%e_table, &
@@ -810,6 +829,11 @@ CONTAINS
     REAL(num) :: scatter_theta, scatter_phi
     TYPE(particle), POINTER :: new_photon
     LOGICAL :: add_photon
+#ifdef SPIN
+    LOGICAL :: polarised_emission
+    REAL(num) :: y, u, screen_gamma, spin_out(3), xi_out(3)
+    REAL(num) :: p_trial(3), e_final, p_final
+#endif
 
     ! Obtain electron direction (magnitude must be > 0 to prevent 1/0 issues)
     part_e = electron%particle_energy
@@ -820,12 +844,22 @@ CONTAINS
     dir_z = electron%part_p(3) / mag_p
 
     ! Determine photon energy
-    rand_temp = random()
-    brem_index = z_to_index(z)
-    photon_energy = find_value_from_table_alt(part_e, rand_temp, &
-        brem_array(brem_index)%size_t, brem_array(brem_index)%size_k, &
-        brem_array(brem_index)%e_table, brem_array(brem_index)%k_table, &
-        brem_array(brem_index)%cdf_table, brem_array(brem_index)%state)
+#ifdef SPIN
+    polarised_emission = brem_spin_polarisation .AND. bh_brem_active(part_e)
+    IF (polarised_emission) THEN
+      CALL bh_brem_sample(part_e, z, y, u, screen_gamma)
+      photon_energy = y * part_e
+    ELSE
+#endif
+      rand_temp = random()
+      brem_index = z_to_index(z)
+      photon_energy = find_value_from_table_alt(part_e, rand_temp, &
+          brem_array(brem_index)%size_t, brem_array(brem_index)%size_k, &
+          brem_array(brem_index)%e_table, brem_array(brem_index)%k_table, &
+          brem_array(brem_index)%cdf_table, brem_array(brem_index)%state)
+#ifdef SPIN
+    END IF
+#endif
 
     ! Is this photon to be added into the simulation?
     add_photon = (photon_energy > photon_energy_min_bremsstrahlung &
@@ -844,18 +878,45 @@ CONTAINS
     ! Rotate photon according to bremsstrahlung emission angular distribution
     ! Only consider trajectory changes from e- with high enough energy to be
     ! added into the simulation
-    IF (photon_energy > photon_energy_min_bremsstrahlung &
-        .AND. use_brem_scatter) THEN
-      scatter_theta = calc_scatter_theta(part_e)
+#ifdef SPIN
+    IF (polarised_emission) THEN
+      scatter_theta = ASIN(MIN(u * mc0 / mag_p, 1.0_num))
       scatter_phi = 2.0_num * pi * random()
       CALL rotate_p(new_photon, COS(scatter_theta), scatter_phi, photon_p)
+      CALL bh_brem_transfer(electron%part_p, new_photon%part_p, y, u, &
+          screen_gamma, electron%spin, spin_out, xi_out)
+      new_photon%spin = xi_out
+      electron%spin = spin_out
+    ELSE
+#endif
+      IF (photon_energy > photon_energy_min_bremsstrahlung &
+          .AND. use_brem_scatter) THEN
+        scatter_theta = calc_scatter_theta(part_e)
+        scatter_phi = 2.0_num * pi * random()
+        CALL rotate_p(new_photon, COS(scatter_theta), scatter_phi, photon_p)
+      END IF
+#ifdef SPIN
     END IF
+#endif
 
     ! Calculate electron recoil (subtract weighted photon momentum)
     IF (use_bremsstrahlung_recoil) THEN
+#ifdef SPIN
+      IF (polarised_emission) THEN
+        e_final = part_e - photon_energy
+        p_final = mc0 * SQRT((e_final / m0c2)**2 - 1.0_num)
+        p_trial = electron%part_p - new_photon%part_p
+        electron%part_p = p_trial * p_final &
+            / SQRT(DOT_PRODUCT(p_trial, p_trial))
+        electron%particle_energy = e_final
+      ELSE
+#endif
       electron%part_p = electron%part_p - photon_weight * new_photon%part_p
       electron%particle_energy = electron%particle_energy &
           - photon_weight * photon_energy
+#ifdef SPIN
+      END IF
+#endif
     END IF
 
     ! This will only create photons that have energies above a user specified
@@ -945,7 +1006,7 @@ CONTAINS
     ! If x_in matches the x_in of the last state, return the last value
     ! Check fractional difference
     IF (ABS(x_in) > 0.0_num) THEN
-      IF (ABS((state%x - x_in)/x_in) < 1e-10_num) THEN
+      IF (ABS(state%x - x_in) < 1e-10_num * ABS(x_in)) THEN
         find_value_from_table_1d = state%val1d
         RETURN
       END IF
@@ -1058,8 +1119,9 @@ CONTAINS
     ! If x_in and p_value match previous values, then return previous value
     IF (ABS(x_in) > 0.0_num .AND. ABS(p_value) > 0.0_num) THEN
       ! Calculate fractional differences
-      IF (ABS((state%x - x_in)/x_in) < 1e-10_num &
-          .AND. ABS((state%y - p_value)/p_value) < 1e-10_num) THEN
+      IF (ABS(state%x - x_in) < 1e-10_num * ABS(x_in) &
+          .AND. ABS(state%y - p_value) < 1e-10_num * ABS(p_value)) &
+          THEN
         find_value_from_table_alt = state%val2d
         RETURN
       END IF

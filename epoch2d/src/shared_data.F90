@@ -817,6 +817,21 @@ MODULE shared_data
   LOGICAL :: use_brem_scatter = .FALSE.
   CHARACTER(LEN=string_length) :: bremsstrahlung_table_location
   LOGICAL :: use_bethe_heitler = .FALSE.
+  LOGICAL :: bh_spin_transfer = .FALSE.
+  LOGICAL :: brem_spin_polarisation = .FALSE.
+  REAL(num) :: brem_spin_energy_min = 1.0e6_num * q0
+#ifdef SPIN
+  ! BH pair polarisation switches (bremsstrahlung block; they need
+  ! bh_spin_transfer = T). spin_bh: c_spin_process_resolved/_unpolarised
+  ! (lepton spins as for an unpolarised photon) or _off (no lepton spins).
+  ! bh_spin_screening = F sets psi_2 = psi_1 in the spin kernel (the
+  ! unscreened T(x)); bh_spin_correlation = F collapses the two helicities
+  ! independently (C_zz = 0); bh_pol_azimuth = F keeps the uniform pair
+  ! azimuth for linearly polarised photons.
+  INTEGER :: spin_bh = c_spin_process_resolved
+  LOGICAL :: bh_spin_screening = .TRUE., bh_spin_correlation = .TRUE.
+  LOGICAL :: bh_pol_azimuth = .TRUE.
+#endif
   LOGICAL :: use_brem_trident = .FALSE.
   LOGICAL :: use_brem_muon = .FALSE.
   LOGICAL :: positron_brem = .FALSE.

@@ -34,6 +34,15 @@ CONTAINS
     bremsstrahlung_table_location = 'src/physics_packages/TABLES/br'
     use_bremsstrahlung_recoil = .TRUE.
     use_bremsstrahlung = .FALSE.
+    bh_spin_transfer = .FALSE.
+    brem_spin_polarisation = .FALSE.
+    brem_spin_energy_min = 1.0e6_num * q0
+#ifdef SPIN
+    spin_bh = c_spin_process_resolved
+    bh_spin_screening = .TRUE.
+    bh_spin_correlation = .TRUE.
+    bh_pol_azimuth = .TRUE.
+#endif
     bremsstrahlung_photon_species = -1
 #ifndef PHOTONS
     photon_species = -1
@@ -217,6 +226,53 @@ CONTAINS
       RETURN
     END IF
 
+    IF (str_cmp(element, 'bh_spin_transfer')) THEN
+      bh_spin_transfer = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'brem_spin_polarisation')) THEN
+      brem_spin_polarisation = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'brem_spin_energy_min')) THEN
+      brem_spin_energy_min = as_real_print(value, element, errcode)
+      RETURN
+    END IF
+
+#ifdef SPIN
+    ! BH pair polarisation switches (for tests; need bh_spin_transfer = T)
+    IF (str_cmp(element, 'spin_bh')) THEN
+      IF (str_cmp(value, 'resolved')) THEN
+        spin_bh = c_spin_process_resolved
+      ELSE IF (str_cmp(value, 'unpolarised') &
+          .OR. str_cmp(value, 'unpolarized')) THEN
+        spin_bh = c_spin_process_unpolarised
+      ELSE IF (str_cmp(value, 'off')) THEN
+        spin_bh = c_spin_process_off
+      ELSE
+        errcode = c_err_bad_value
+      END IF
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'bh_spin_screening')) THEN
+      bh_spin_screening = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'bh_spin_correlation')) THEN
+      bh_spin_correlation = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+
+    IF (str_cmp(element, 'bh_pol_azimuth')) THEN
+      bh_pol_azimuth = as_logical_print(value, element, errcode)
+      RETURN
+    END IF
+#endif
+
     IF (str_cmp(element, 'use_brem_trident')) THEN
       use_brem_trident = as_logical_print(value, element, errcode)
       RETURN
@@ -250,6 +306,107 @@ CONTAINS
     errcode = c_err_none
 
 #ifdef BREMSSTRAHLUNG
+    IF (brem_spin_polarisation) THEN
+#if !defined(SPIN) || !defined(PHOTONS)
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'brem_spin_polarisation needs -DSPIN -DPHOTONS.'
+        END DO
+      END IF
+      errcode = c_err_pp_options_missing + c_err_terminate
+#else
+      IF (.NOT. use_bremsstrahlung .OR. &
+          .NOT. produce_bremsstrahlung_photons .OR. &
+          .NOT. use_bremsstrahlung_recoil .OR. &
+          .NOT. use_brem_scatter .OR. use_plasma_screening .OR. &
+          positron_brem .OR. .NOT. photon_polarisation .OR. &
+          ABS(photon_weight - 1.0_num) > 1.0e-12_num .OR. &
+          brem_spin_energy_min < 1.0e3_num * q0) THEN
+        IF (rank == 0) THEN
+          DO iu = 1, nio_units
+            io = io_units(iu)
+            WRITE(io,*) '*** ERROR ***'
+            WRITE(io,*) 'brem_spin_polarisation requires photons,', &
+                ' recoil, scatter, photon_weight=1, and', &
+                ' brem_spin_energy_min >= 1 keV; plasma screening', &
+                ' and positron bremsstrahlung must be off.'
+          END DO
+        END IF
+        errcode = c_err_bad_value + c_err_terminate
+      ELSE IF (rank == 0) THEN
+        DO iu = 1, nio_units
+          io = io_units(iu)
+          WRITE(io,*) 'BH bremsstrahlung spin mode: Olsen-Maximon', &
+              ' screened electron-nucleus kernel for gamma_i=50..1e8', &
+              ' and gamma_f>=10; below/above this range the old', &
+              ' unpolarised bremsstrahlung path is used.'
+          WRITE(io,*) 'The physical photon event cut is', &
+              brem_spin_energy_min / (1.0e6_num * q0), ' MeV.'
+        END DO
+      END IF
+#endif
+    END IF
+
+    IF (bh_spin_transfer) THEN
+#ifndef SPIN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'bh_spin_transfer requires -DSPIN.'
+        END DO
+      END IF
+      errcode = c_err_pp_options_missing + c_err_terminate
+#else
+      IF (.NOT. use_bremsstrahlung .OR. .NOT. use_bethe_heitler) THEN
+        IF (rank == 0) THEN
+          DO iu = 1, nio_units
+            io = io_units(iu)
+            WRITE(io,*) '*** ERROR ***'
+            WRITE(io,*) 'bh_spin_transfer requires use_bethe_heitler=T', &
+                ' and use_bremsstrahlung=T.'
+          END DO
+        END IF
+        errcode = c_err_bad_value + c_err_terminate
+      ELSE IF (rank == 0) THEN
+        DO iu = 1, nio_units
+          io = io_units(iu)
+          WRITE(io,*) '*** WARNING ***'
+          WRITE(io,*) 'BH spin transfer uses a high-energy, ', &
+              'angle-integrated approximation for photons at least 20 MeV', &
+              ' with both lepton Lorentz factors at least 10.'
+          WRITE(io,*) 'Outside this range, newborn pair spins are zero.'
+          WRITE(io,*) 'Use high-Z, stationary targets: the existing BH', &
+              ' total rate includes an atomic-electron contribution.'
+          WRITE(io,*) 'Helicities and their correlation follow', &
+              ' qed spin_final_states; the pair azimuth follows', &
+              ' the linear photon polarisation (one-lepton law).'
+          WRITE(io,*) 'Transverse pair-spin correlations and', &
+              ' spin-angle correlations are not included.'
+        END DO
+      END IF
+#endif
+    END IF
+
+#ifdef SPIN
+    ! The BH pair polarisation switches act only with bh_spin_transfer
+    IF (.NOT. bh_spin_transfer .AND. (spin_bh /= c_spin_process_resolved &
+        .OR. .NOT. bh_spin_screening .OR. .NOT. bh_spin_correlation &
+        .OR. .NOT. bh_pol_azimuth)) THEN
+      IF (rank == 0) THEN
+        DO iu = 1, nio_units
+          io = io_units(iu)
+          WRITE(io,*) '*** ERROR ***'
+          WRITE(io,*) 'spin_bh, bh_spin_screening, bh_spin_correlation', &
+              ' and bh_pol_azimuth need bh_spin_transfer=T.'
+        END DO
+      END IF
+      errcode = c_err_bad_value + c_err_terminate
+    END IF
+#endif
+
     IF (photon_weight <= 0.0_num) THEN
       IF (rank == 0) THEN
         DO iu = 1, nio_units ! Print to stdout and to file
