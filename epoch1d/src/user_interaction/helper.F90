@@ -20,7 +20,9 @@ MODULE helper
   USE partlist
   USE simple_io
   USE deltaf_loader
-
+#ifdef SPIN
+  USE spin
+#endif
   IMPLICIT NONE
 
   REAL(num), POINTER :: species_density(:)
@@ -154,6 +156,9 @@ CONTAINS
           current => current%next
         END DO
       END IF
+#endif
+#ifdef SPIN
+      CALL setup_particle_spin(species)
 #endif
     END DO
 
@@ -898,6 +903,19 @@ CONTAINS
         IF (curr_loader%pz_data_given) THEN
           new_particle%part_p(3) = pzbuf(read_count)
         END IF
+#if defined(PHOTONS) || defined(BREMSSTRAHLUNG)
+        ! The photon push uses the stored energy; set it as auto_load does
+        IF (species%species_type == c_species_id_photon) THEN
+          new_particle%particle_energy = SQRT(SUM(new_particle%part_p**2)) * c
+        END IF
+#endif
+#ifdef SPIN
+        ! Spin (leptons) or polarisation (photons) set in the species
+        ! block. auto_load sets these only for its own particles, so set
+        ! them here, per particle. With no setting the spin stays zero,
+        ! unlike the random unit spins of an auto-loaded lepton species.
+        IF (species%spin_given) CALL init_particle_spin(species, new_particle)
+#endif
 #if defined(PARTICLE_ID) || defined(PARTICLE_ID4)
         IF (curr_loader%id_data_given) THEN
 #if defined(PARTICLE_ID4)
@@ -935,6 +953,13 @@ CONTAINS
           io = ios_units(iu)
           WRITE(io,*) 'Inserted ', TRIM(stra), &
               ' custom particles of species "', TRIM(species%name), '"'
+#ifdef SPIN
+          IF (.NOT.species%spin_given &
+              .AND. species%species_type /= c_species_id_photon) THEN
+            WRITE(io,*) 'They start with zero spin: species "', &
+                TRIM(species%name), '" sets no spin'
+          END IF
+#endif
         END DO
       END IF
     END DO

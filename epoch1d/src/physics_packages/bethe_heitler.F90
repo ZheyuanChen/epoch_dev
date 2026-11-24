@@ -34,6 +34,9 @@ MODULE bethe_heitler
   USE particles
   USE calc_df
   USE setup
+#ifdef SPIN
+  USE spin, ONLY: reference_axis
+#endif
 
   IMPLICIT NONE
 
@@ -41,6 +44,7 @@ MODULE bethe_heitler
   REAL(num), PRIVATE, PARAMETER :: ubarn = 1.0e-34_num        ! 1 microbarn [m²]
   REAL(num), PRIVATE, PARAMETER :: gev_100 = 1.0e11_num * q0  ! 100 GeV [J]
   REAL(num), PRIVATE, PARAMETER :: mev_50 = 50.0e6_num * q0   ! 50 MeV [J]
+  REAL(num), PRIVATE, PARAMETER :: mev_20 = 20.0e6_num * q0   ! 20 MeV [J]
   REAL(num), PRIVATE, PARAMETER :: mev_2 = 2.0e6_num * q0     ! 2 MeV [J]
   REAL(num), PRIVATE, PARAMETER :: kev_1500 = 1.5e6_num * q0  ! 1.5 MeV [J]
   REAL(num), PRIVATE, PARAMETER :: two_mc2 = 2.0_num * m0c2
@@ -259,6 +263,11 @@ CONTAINS
     REAL(num) :: energy_2, momentum_2, theta_2, phi_2
     REAl(num) :: norm, dir_x, dir_y, dir_z
     REAL(num) :: p_save, e_save, theta_save, phi_save
+    LOGICAL :: use_basis
+#ifdef SPIN
+    REAL(num) :: psi_1, psi_2, xi(3), n_gamma(3), r1(3), r2(3)
+    LOGICAL :: bh_pol
+#endif
 
     ! Create pair at photon position
     CALL create_particle(new_electron)
@@ -282,6 +291,19 @@ CONTAINS
     ! Calculate scatter angles of each particle
     CALL sample_theta(energy_1, energy_2, theta_1, theta_2)
     phi_1 = random()*2.0_num*pi
+    use_basis = .FALSE.
+#ifdef SPIN
+    ! Pair azimuths: screening functions at the sampled split, then
+    ! the pair azimuth, measured from the photon's Stokes reference
+    ! axis r1.
+    bh_pol = .FALSE.
+    IF (bh_spin_transfer) THEN
+      CALL bh_pol_setup(photon, z_int, energy_1, bh_pol, psi_1, psi_2, xi)
+      IF (bh_pol .AND. bh_pol_azimuth) &
+          CALL bh_pair_azimuth(photon%part_p, e_frac, psi_1, psi_2, xi, &
+          phi_1, n_gamma, r1, r2, use_basis)
+    END IF
+#endif
     phi_2 = phi_1 + pi
 
     ! Calculate momentum direction of generating photon
@@ -308,17 +330,37 @@ CONTAINS
       phi_2 = phi_save
     END IF
 
-    ! Assign momenta to particles
-    new_electron%part_p(1:3) = momentum_1 * (/ dir_x, dir_y, dir_z /)
-    new_positron%part_p(1:3) = momentum_2 * (/ dir_x, dir_y, dir_z /)
+    IF (use_basis) THEN
+#ifdef SPIN
+      ! Azimuths are measured from r1 towards r2 about the photon
+      ! direction (rotate_p uses a different azimuthal origin)
+      new_electron%part_p(1:3) = momentum_1 &
+          * bh_direction(n_gamma, r1, r2, COS(theta_1), phi_1)
+      new_positron%part_p(1:3) = momentum_2 &
+          * bh_direction(n_gamma, r1, r2, COS(theta_2), phi_2)
+#endif
+    ELSE
+      ! Assign momenta to particles
+      new_electron%part_p(1:3) = momentum_1 * (/ dir_x, dir_y, dir_z /)
+      new_positron%part_p(1:3) = momentum_2 * (/ dir_x, dir_y, dir_z /)
 
-    ! Rotate momenta for each particle
-    CALL rotate_p(new_electron, COS(theta_1), phi_1, momentum_1)
-    CALL rotate_p(new_positron, COS(theta_2), phi_2, momentum_2)
+      ! Rotate momenta for each particle
+      CALL rotate_p(new_electron, COS(theta_1), phi_1, momentum_1)
+      CALL rotate_p(new_positron, COS(theta_2), phi_2, momentum_2)
+    END IF
 
     ! Set particle energies
     new_electron%particle_energy = energy_1
     new_positron%particle_energy = energy_2
+
+#ifdef SPIN
+    IF (bh_pol .AND. spin_bh /= c_spin_process_off) THEN
+      IF (spin_bh == c_spin_process_unpolarised) xi(2) = 0.0_num
+      CALL bh_pair_spins(energy_1 / photon%particle_energy, psi_1, psi_2, &
+          xi(2), new_electron%part_p, new_positron%part_p, &
+          new_electron%spin, new_positron%spin)
+    END IF
+#endif
 
     ! Save pair to particle list
     CALL add_particle_to_partlist(species_list(ielectron)%attached_list, &
@@ -337,6 +379,277 @@ CONTAINS
     END IF
 
   END SUBROUTINE generate_pair
+
+
+#ifdef SPIN
+  SUBROUTINE bh_pol_setup(photon, z_int, e_lepton, valid, psi_1, psi_2, xi)
+
+    ! Common set-up of the BH pair polarisation (bh_spin_transfer): the
+    ! validity checks, the Olsen-Maximon screening functions at the
+    ! sampled split, and the photon's stored Stokes vector. valid = F for
+    ! photons below 20 MeV or a lepton below gamma = 10, where the
+    ! high-energy, small-angle kernels do not apply; such pairs get zero
+    ! spins and a uniform azimuth. psi_1, psi_2 use the same fits and
+    ! f(Z) as energy_split, so the spin-summed kernel is the spectrum
+    ! that energy_split samples. photon_polarisation = F (qed block)
+    ! treats the photon as unpolarised, as for the other processes.
+    TYPE(particle), POINTER, INTENT(IN) :: photon
+    INTEGER, INTENT(IN) :: z_int
+    REAL(num), INTENT(IN) :: e_lepton
+    LOGICAL, INTENT(OUT) :: valid
+    REAL(num), INTENT(OUT) :: psi_1, psi_2, xi(3)
+    REAL(num) :: e_gamma, x, screen_term, f1, f2, fz
+
+    valid = .FALSE.
+    psi_1 = 0.0_num
+    psi_2 = 0.0_num
+    xi = 0.0_num
+    e_gamma = photon%particle_energy
+    IF (e_gamma < mev_20) RETURN
+    IF (MIN(e_lepton, e_gamma - e_lepton) < 10.0_num * m0c2) RETURN
+    valid = .TRUE.
+
+    ! 0 < x < 1; psi is symmetric in x and 1 - x
+    x = e_lepton / e_gamma
+    screen_term = screen_fac(z2ind(z_int)) * m0c2 &
+        / (e_gamma * x * (1.0_num - x))
+    CALL get_screening_funcs(photon, screen_term, z_int, f1, f2, fz, &
+        psi_1, psi_2)
+    ! Clamp each component of the photon polarisation to [-1,1]
+    xi = MIN(MAX(photon%spin, -1.0_num), 1.0_num)
+#ifdef PHOTONS
+    IF (.NOT. photon_polarisation) xi = 0.0_num
+#endif
+
+  END SUBROUTINE bh_pol_setup
+
+
+
+  SUBROUTINE bh_pair_azimuth(p_photon, x, psi_1, psi_2, xi, phi, n, r1, &
+      r2, use_basis)
+
+    ! Azimuth of the pair for a linearly polarised photon.
+    ! Rejection sampling: accept the azimuth angle phi if
+    ! r(1+A P_lin) <= 1+ A[xi_1 (cos2phi) - xi_3 sin(2phi)]
+
+    ! OM (Phys. Rev. 114, 887 (1959)) Eq. 10.1 summed over spins,
+    ! integrated over one lepton's direction and over the other's polar
+    ! angle, gives that lepton's azimuth phi about the photon direction:
+    !   p(phi) = [1 + A (xi_1 cos 2phi - xi_3 sin 2phi)] / (2 pi),
+    ! with phi measured from the Stokes reference axis r1 towards r2
+    ! (reference_axis; (xi_1, xi_3) = P_lin (cos 2psi, -sin 2psi) for a
+    ! linear axis at psi from r1, so leptons favour the polarisation
+    ! plane) and A from bh_azimuth_asymmetry. A is symmetric in the two
+    ! leptons, and EPOCH's pair is coplanar (phi_2 = phi_1 + pi), so both
+    ! leptons follow this law. It is the one-lepton law, not the
+    ! pair-bisector law of Gros and Bernard; spin-azimuth correlations
+    ! are not modelled.
+    ! The input phi, already uniform, is the first rejection candidate
+    ! (envelope 1 + A P_lin). use_basis = F leaves phi unchanged (no
+    ! linear polarisation), so unpolarised photons keep the old draw;
+    ! otherwise phi is on (r1, r2) and n, r1, r2 are returned.
+    REAL(num), INTENT(IN) :: p_photon(3), x, psi_1, psi_2, xi(3)
+    REAL(num), INTENT(INOUT) :: phi
+    REAL(num), INTENT(OUT) :: n(3), r1(3), r2(3)
+    LOGICAL, INTENT(OUT) :: use_basis
+    REAL(num) :: a, p_lin, bound
+    LOGICAL :: valid
+
+    use_basis = .FALSE.
+    n = 0.0_num
+    r1 = 0.0_num
+    r2 = 0.0_num
+    p_lin = SQRT(xi(1)**2 + xi(3)**2)
+    a = bh_azimuth_asymmetry(x, psi_1, psi_2)
+    IF (a * p_lin <= 0.0_num) RETURN
+    CALL bh_unit_vector(p_photon, n, valid)
+    IF (.NOT. valid) RETURN
+    CALL reference_axis(n, r1, r2)
+
+    bound = 1.0_num + a * p_lin
+    DO
+      IF (random() * bound <= 1.0_num + a * (xi(1) * COS(2.0_num * phi) &
+          - xi(3) * SIN(2.0_num * phi))) EXIT
+      phi = random() * 2.0_num * pi
+    END DO
+    use_basis = .TRUE.
+
+  END SUBROUTINE bh_pair_azimuth
+
+
+
+  PURE FUNCTION bh_azimuth_asymmetry(x, psi_1, psi_2) RESULT(a)
+    ! The A function used for sampling the pair azimuth.
+    ! x is the electron's energy fraction and psi1 and psi2 are the
+    ! screening functions.
+
+    ! Linear-polarisation azimuthal asymmetry of one BH lepton, from
+    ! Olsen and Maximon Eq. 10.1 (spins summed) integrated over the
+    ! lepton's polar angle. With xi = 1/(1 + u^2), Eq. 10.1 has
+    ! 1/2 (e1^2 + e2^2)(3 + 2 Gamma) + e1 e2 + 8 e1 e2 xi^2 Gamma |u.e|^2,
+    ! and xi^2 u^2 = xi (1 - xi). OM Eq. 8.6, psi_1 = 6 + 4 int Gamma and
+    ! psi_2 = 6 + 24 int xi (1 - xi) Gamma, turns the integral into
+    !   A = 2/3 x y (psi_2 - 6) / [(x^2 + y^2) psi_1 + 2/3 x y psi_2],
+    ! whose denominator is the spin-summed spectrum. The absolute
+    ! normalisation of psi matters here: Geant4's phi_i - F(Z)/2 matches
+    ! OM's (complete screening: psi_1 = 4 ln(183 Z^(-1/3)) - 4 f in both,
+    ! up to the fit). A is clamped to [0, 1]; psi_2 < 6 is outside the
+    ! model.
+    REAL(num), INTENT(IN) :: x, psi_1, psi_2
+    REAL(num) :: a, y, d
+
+    a = 0.0_num
+    y = 1.0_num - x
+    d = (x * x + y * y) * psi_1 + 2.0_num * x * y * psi_2 / 3.0_num
+    IF (d <= 0.0_num) RETURN
+    a = 2.0_num * x * y * (psi_2 - 6.0_num) / (3.0_num * d)
+    a = MIN(MAX(a, 0.0_num), 1.0_num)
+
+  END FUNCTION bh_azimuth_asymmetry
+
+
+
+  PURE FUNCTION bh_direction(n, r1, r2, cos_theta, phi) RESULT(dir)
+
+    ! Unit vector at polar angle theta from n and azimuth phi from r1
+    ! towards r2. sin(theta) >= 0 as in rotate_p.
+    REAL(num), INTENT(IN) :: n(3), r1(3), r2(3), cos_theta, phi
+    REAL(num) :: dir(3), sin_theta
+
+    sin_theta = SQRT(MAX(1.0_num - cos_theta**2, 0.0_num))
+    dir = cos_theta * n + sin_theta * (COS(phi) * r1 + SIN(phi) * r2)
+
+  END FUNCTION bh_direction
+
+
+
+  SUBROUTINE bh_pair_spins(x, psi_1, psi_2, xi2, p_electron, p_positron, &
+      spin_electron, spin_positron)
+
+    ! Helicities of a Bethe-Heitler pair from the angle-integrated
+    ! Olsen-Maximon kernel (Phys. Rev. 114, 887 (1959), Eq. 10.8); see
+    ! bh_spin_kernel. x is the electron's share of the photon energy and
+    ! psi_1, psi_2, xi2 come from bh_pol_setup. The spins are rest-frame
+    ! Cartesian vectors along each lepton's own momentum (Olsen and
+    ! Maximon quantise along the photon direction, which differs by an
+    ! angle of order m c^2 / E).
+    ! spin_final_states (qed block) selects, as for NBW and LBW pairs,
+    !   mean:     s_e = P_e p_e_hat, s_p = P_p p_p_hat; no random
+    !             number and no pair correlation.
+    !   collapse: s_e = +-p_e_hat with P(+) = (1 + P_e) / 2; given its
+    !             sign s, s_p = +-p_p_hat with P(+) = (1 + k) / 2,
+    !             k = (P_p + s C_zz) / (1 + s P_e). Two random numbers.
+    ! Averaged over the random numbers, collapse gives the mean spins and
+    ! the longitudinal correlation C_zz. The transverse correlations of
+    ! Eq. 10.8, the only place linear photon polarisation enters the
+    ! spins, are not carried: the pair is entangled there, and two spin
+    ! vectors cannot represent it. Without -DPHOTONS there is no qed
+    ! block, and mean is used.
+    ! Test switches: bh_spin_screening = F uses psi_2 = psi_1 (the
+    ! unscreened xi2 T(x)); bh_spin_correlation = F collapses the
+    ! positron on its own marginal (k = P_p, so C_zz = P_e P_p).
+    REAL(num), INTENT(IN) :: x, psi_1, psi_2, xi2
+    REAL(num), INTENT(IN) :: p_electron(3), p_positron(3)
+    REAL(num), INTENT(INOUT) :: spin_electron(3), spin_positron(3)
+    REAL(num) :: psi_2_used, p_e, p_p, c_zz, s_e, s_p, k
+    REAL(num) :: n_e(3), n_p(3)
+    LOGICAL :: valid_e, valid_p, collapse
+
+    CALL bh_unit_vector(p_electron, n_e, valid_e)
+    CALL bh_unit_vector(p_positron, n_p, valid_p)
+    IF (.NOT. (valid_e .AND. valid_p)) RETURN
+
+    psi_2_used = psi_2
+    IF (.NOT. bh_spin_screening) psi_2_used = psi_1
+    CALL bh_spin_kernel(x, psi_1, psi_2_used, xi2, p_e, p_p, c_zz)
+    IF (.NOT. bh_spin_correlation) c_zz = p_e * p_p
+
+#ifdef PHOTONS
+    collapse = spin_final_states == c_spin_final_collapse
+#else
+    collapse = .FALSE.
+#endif
+    IF (collapse) THEN
+      s_e = 1.0_num
+      IF (random() >= 0.5_num * (1.0_num + p_e)) s_e = -1.0_num
+      ! 1 + s_e P_e > 0 for the sign drawn; this only guards round-off
+      k = (p_p + s_e * c_zz) / MAX(1.0_num + s_e * p_e, TINY(1.0_num))
+      k = MIN(MAX(k, -1.0_num), 1.0_num)
+      s_p = 1.0_num
+      IF (random() >= 0.5_num * (1.0_num + k)) s_p = -1.0_num
+      spin_electron = s_e * n_e
+      spin_positron = s_p * n_p
+    ELSE
+      spin_electron = p_e * n_e
+      spin_positron = p_p * n_p
+    END IF
+
+  END SUBROUTINE bh_pair_spins
+
+
+
+  PURE SUBROUTINE bh_spin_kernel(x, psi_1, psi_2, xi2, p_e, p_p, c_zz)
+
+    ! Longitudinal part of the Olsen-Maximon angle-integrated pair-spin
+    ! kernel (Phys. Rev. 114, 887 (1959), Eqs. 10.8 and 10.11). x is the
+    ! electron's share of the photon energy, y = 1 - x the positron's,
+    ! psi_1 and psi_2 the screening functions with the Coulomb
+    ! correction (OM Eq. 8.6; psi_i = phi_i - f(Z) / 2 in the Geant4
+    ! notation of get_screening_funcs) and xi2 the photon's circular
+    ! Stokes parameter. With psi_d = psi_1 - 2 psi_2 / 3 and
+    ! d = (x^2 + y^2) psi_1 + 2 x y psi_2 / 3, the spin-summed spectrum,
+    !   P_e  = xi2 (x psi_1 - y psi_d) / d,
+    !   P_p  = xi2 (y psi_1 - x psi_d) / d,
+    !   C_zz = (2 x y psi_2 / 3 - (x^2 + y^2) psi_d) / d
+    ! are the electron and positron helicities and their correlation
+    ! <h_e h_p>. C_zz does not depend on the photon polarisation. For
+    ! psi_1 = psi_2 (no screening), P_e = xi2 (4x - 1) / (4x^2 - 4x + 3)
+    ! (Muller and Muller 2011) and C_zz = (4xy - 1) / (3 - 4xy).
+    ! The outputs are clamped to [-1, 1] against fit round-off.
+    REAL(num), INTENT(IN) :: x, psi_1, psi_2, xi2
+    REAL(num), INTENT(OUT) :: p_e, p_p, c_zz
+    REAL(num) :: y, xi, psi_d, d, x2y2
+
+    p_e = 0.0_num
+    p_p = 0.0_num
+    c_zz = 0.0_num
+    y = 1.0_num - x
+    x2y2 = x * x + y * y
+    psi_d = psi_1 - 2.0_num * psi_2 / 3.0_num
+    d = x2y2 * psi_1 + 2.0_num * x * y * psi_2 / 3.0_num
+    ! d > 0 wherever energy_split samples; this only guards misuse
+    IF (d <= 0.0_num) RETURN
+
+    xi = MIN(MAX(xi2, -1.0_num), 1.0_num)
+    p_e = xi * (x * psi_1 - y * psi_d) / d
+    p_p = xi * (y * psi_1 - x * psi_d) / d
+    c_zz = (2.0_num * x * y * psi_2 / 3.0_num - x2y2 * psi_d) / d
+    p_e = MIN(MAX(p_e, -1.0_num), 1.0_num)
+    p_p = MIN(MAX(p_p, -1.0_num), 1.0_num)
+    c_zz = MIN(MAX(c_zz, -1.0_num), 1.0_num)
+
+  END SUBROUTINE bh_spin_kernel
+
+
+
+  SUBROUTINE bh_unit_vector(v, n, valid)
+
+    ! n = v / |v|, scaled first so that tiny momenta do not underflow;
+    ! valid = F (and n = 0) for a zero vector
+    REAL(num), INTENT(IN) :: v(3)
+    REAL(num), INTENT(OUT) :: n(3)
+    LOGICAL, INTENT(OUT) :: valid
+    REAL(num) :: scale
+
+    n = 0.0_num
+    scale = MAXVAL(ABS(v))
+    valid = scale > TINY(1.0_num)
+    IF (.NOT. valid) RETURN
+    n = v / scale
+    n = n / SQRT(DOT_PRODUCT(n, n))
+
+  END SUBROUTINE bh_unit_vector
+#endif
 
 
 
@@ -414,17 +727,23 @@ CONTAINS
 
 
 
-  SUBROUTINE get_screening_funcs(photon, screen_term, iz, f1, f2, fz)
+  SUBROUTINE get_screening_funcs(photon, screen_term, iz, f1, f2, fz, &
+      psi_1, psi_2)
 
     ! The Geant4 physics reference manual describes three functions, F1, F2 and
     ! f(Z) which are used to sample the energy split in pair creation. These
     ! are calculated for each sampled split in the accept/reject algorithm, and
     ! so are moved to this subroutine for conciceness.
+    !
+    ! The optional psi_1, psi_2 = phi_1,2 - f(Z)/2 are the screening
+    ! functions of the spin-summed spectrum (Olsen and Maximon's psi_1,2),
+    ! used by the BH spin kernel.
 
     TYPE(particle), POINTER, INTENT(IN) :: photon
     REAL(num), INTENT(IN) :: screen_term
     REAL(num) :: phi_1, phi_2
     REAL(num), INTENT(OUT) :: f1, f2, fz
+    REAL(num), INTENT(OUT), OPTIONAL :: psi_1, psi_2
     INTEGER :: iz
 
     ! Auxiliary phi functions
@@ -442,9 +761,16 @@ CONTAINS
       fz = fz_high(z2ind(iz))
     END IF
 
-    ! Auxiliary screening functions
+    ! Auxiliary screening functions. The spectrum
+    ! [e^2 + (1-e)^2] (phi_1 - fz/2) + 2/3 e (1-e) (phi_2 - fz/2)
+    ! equals 2/3 (1/2 - e)^2 f1 + f2/3 only with +0.5 phi_2 in f2, as in
+    ! Geant4 (G4BetheHeitlerModel ScreenFunction2 = 1.5 PHI1 + 0.5 PHI2).
+    ! Upstream EPOCH had -0.5 phi_2, which oversamples asymmetric splits.
     f1 = 3.0_num * phi_1 - phi_2 - fz
-    f2 = 1.5_num * phi_1 - 0.5_num * phi_2 - fz
+    f2 = 1.5_num * phi_1 + 0.5_num * phi_2 - fz
+
+    IF (PRESENT(psi_1)) psi_1 = phi_1 - 0.5_num * fz
+    IF (PRESENT(psi_2)) psi_2 = phi_2 - 0.5_num * fz
 
   END SUBROUTINE get_screening_funcs
 

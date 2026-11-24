@@ -22,7 +22,7 @@ MODULE boundary
   USE utilities
   USE particle_id_hash_mod
   USE injectors
-
+  USE spin
   IMPLICIT NONE
 
 CONTAINS
@@ -719,6 +719,10 @@ CONTAINS
                 xbd = 0
                 cur%part_pos = 2.0_num * x_min - part_pos
                 cur%part_p(1) = -cur%part_p(1)
+#ifdef SPIN
+                IF (species_list(ispecies)%species_type &
+                    == c_species_id_photon) cur%spin(2:3) = -cur%spin(2:3)
+#endif
               END IF
             ELSE IF (bc == c_bc_periodic) THEN
               IF (x_min_boundary) THEN
@@ -750,6 +754,9 @@ CONTAINS
                     species_list(ispecies)%mass, temp(i), 0.0_num)
 
                 cur%part_pos = 2.0_num * x_min_outer - part_pos
+#ifdef SPIN
+                CALL init_particle_spin(species_list(ispecies), cur)
+#endif
 
               ELSE IF (x_min_boundary) THEN
                 xbd = 0
@@ -789,6 +796,10 @@ CONTAINS
                 xbd = 0
                 cur%part_pos = 2.0_num * x_max - part_pos
                 cur%part_p(1) = -cur%part_p(1)
+#ifdef SPIN
+                IF (species_list(ispecies)%species_type &
+                    == c_species_id_photon) cur%spin(2:3) = -cur%spin(2:3)
+#endif
               END IF
             ELSE IF (bc == c_bc_periodic) THEN
               IF (x_max_boundary) THEN
@@ -820,6 +831,9 @@ CONTAINS
                     species_list(ispecies)%mass, temp(i), 0.0_num)
 
                 cur%part_pos = 2.0_num * x_max_outer - part_pos
+#ifdef SPIN
+                CALL init_particle_spin(species_list(ispecies), cur)
+#endif
 
               ELSE IF (x_max_boundary) THEN
                 xbd = 0

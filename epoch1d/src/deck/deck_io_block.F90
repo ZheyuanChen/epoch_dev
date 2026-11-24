@@ -629,6 +629,44 @@ CONTAINS
       elementselected = c_dump_part_work_z_total
 #endif
 
+  ! Spin. The plain names (or with _cartesian suffix)
+  ! give the lab-frame spin of a lepton and the
+  ! Cartesian polarisation vector of a photon; the _rf (aliased _ref)
+  ! the stored vector: the rest-frame spin, or the Stokes vector on the
+  ! photon's reference axes. See user manual
+#ifdef SPIN
+    ELSE IF (str_cmp(element, 'spin_x') &
+          .OR. str_cmp(element, 'spin_x_lab') &
+          .OR. str_cmp(element, 'polarisation_x') &
+          .OR. str_cmp(element, 'polarisation_x_cartesian')) THEN
+      elementselected = c_dump_part_spin_x
+
+    ELSE IF (str_cmp(element, 'spin_y') &
+          .OR. str_cmp(element, 'spin_y_lab') &
+          .OR. str_cmp(element, 'polarisation_y') &
+          .OR. str_cmp(element, 'polarisation_y_cartesian')) THEN
+      elementselected = c_dump_part_spin_y
+
+    ELSE IF (str_cmp(element, 'spin_z') &
+          .OR. str_cmp(element, 'spin_z_lab') &
+          .OR. str_cmp(element, 'polarisation_z') &
+          .OR. str_cmp(element, 'polarisation_z_cartesian')) THEN
+      elementselected = c_dump_part_spin_z
+
+    ELSE IF (str_cmp(element, 'spin_x_rf') &
+          .OR. str_cmp(element, 'polarisation_x_ref')) THEN
+      elementselected = c_dump_part_spin_x_rf
+
+    ELSE IF (str_cmp(element, 'spin_y_rf') &
+          .OR. str_cmp(element, 'polarisation_y_ref')) THEN
+      elementselected = c_dump_part_spin_y_rf
+
+    ELSE IF (str_cmp(element, 'spin_z_rf') &
+          .OR. str_cmp(element, 'polarisation_z_ref')) THEN
+      elementselected = c_dump_part_spin_z_rf
+#endif
+
+
 #ifdef TRANSITION_RATES
     ELSE IF (str_cmp(element, 'rate_fi')) THEN
       elementselected = c_dump_part_rate_fi
@@ -1150,6 +1188,17 @@ CONTAINS
     io_block%dumpmask(c_dump_part_work_z_total) = &
          IOR(io_block%dumpmask(c_dump_part_work_z_total), c_io_restartable)
 #endif   
+
+    ! Spin: restarts need the stored vector, not the lab-frame one
+#ifdef SPIN
+    io_block%dumpmask(c_dump_part_spin_x_rf) = &
+        IOR(io_block%dumpmask(c_dump_part_spin_x_rf), c_io_restartable)
+    io_block%dumpmask(c_dump_part_spin_y_rf) = &
+        IOR(io_block%dumpmask(c_dump_part_spin_y_rf), c_io_restartable)
+    io_block%dumpmask(c_dump_part_spin_z_rf) = &
+        IOR(io_block%dumpmask(c_dump_part_spin_z_rf), c_io_restartable)
+#endif
+
     ! Persistent IDs
     io_block%dumpmask(c_dump_persistent_ids) = &
         IOR(io_block%dumpmask(c_dump_persistent_ids), c_io_restartable)
