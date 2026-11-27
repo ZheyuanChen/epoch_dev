@@ -1,0 +1,176 @@
+# Vacuum birefringence: the vacuum in a strong magnetic field acts on
+# high-energy photons as a wave plate, turning linear polarisation into
+# circular polarisation and back.
+#
+# Needs a build with -DSPIN and -DPHOTONS. use_spin_qed is NOT needed.
+#
+# Physics
+# -------
+# In a strong field the QED vacuum has two refractive indices: one for
+# light polarised along the field's effective electric-field axis
+# E_hat (the "E mode") and one for light polarised perpendicular to it
+# (the "B mode"). Their difference comes from the one-loop photon
+# polarisation operator in the locally constant field approximation
+# (LCFA). A photon in a superposition of the two modes picks up a
+# relative phase phi between them, so its Stokes vector rotates:
+#
+#   xi_1 (the E/B-mode content) stays fixed, while (xi_3, xi_2), the
+#   45-degree linear and the circular parts, rotate by phi.
+#
+# EPOCH applies this each step with
+#   phi = alpha dt G(chi_gamma) / (2 tau_C epsilon_gamma),
+# tau_C = hbar / (m c^2), epsilon_gamma the photon energy in m c^2 and
+# G from TABLES/vacuum_birefringence.table. In weak fields
+# G -> -chi_gamma^2 / (15 pi) (the Euler-Heisenberg limit), so the
+# phase per unit length grows like epsilon_gamma B^2.
+#
+# Set-up
+# ------
+# 20 MeV photons (epsilon_gamma = 40) move along +x in a uniform
+# magnetic field B = b0 z. For photons along +x the reference axes are
+# (r1, r2) = (y, z), and with B along z the field axes coincide with
+# them: E_hat = y, so xi_1 = +1 is the E mode and xi_1 = -1 (polarised
+# along B) the B mode. b0 is chosen so that chi_gamma = 0.2 (EPOCH's
+# photon chi, the Chi output, is chi_gamma / 2 = 0.1). At this chi
+# nonlinear Breit-Wheeler decay is exponentially suppressed (about 0.1%
+# of the photons would decay in the run), so produce_pairs = F leaves
+# out nothing important.
+#
+#   species   initial polarisation              expected
+#   e_mode    xi = (1, 0, 0), linear along y    unchanged (eigenmode)
+#   b_mode    xi = (-1, 0, 0), linear along z   unchanged (eigenmode)
+#   diag      xi = (0, 0, 1), linear at 45 deg  turns into circular and
+#             along (y - z) / sqrt(2)           back (a wave plate)
+#   circ      xi = (0, 1, 0), positive helicity turns into linear at 45 deg
+#   unpol     xi = 0                            stays unpolarised
+#
+# Expected: G(0.2) = -8.6e-4, so phi changes at -6.1e13 rad/s. The diag
+# photons have xi_3 = cos(phi), xi_2 = sin(phi): fully circular with
+# negative helicity (xi_2 = -1) after a quarter turn, 26 fs; linear
+# along (y + z) / sqrt(2) (xi_3 = -1) after 52 fs; back to the start
+# after 103 fs. |xi| stays 1: the polarisation is rotated, not lost.
+
+begin:constant
+  # Photon energy in units of m c^2 (20 MeV) and momentum
+  e_ph = 40
+  p_ph = e_ph * me * c
+  # EPOCH's photon chi = chi_gamma / 2 = e_ph B / (2 B_s), so
+  # b0 = 2 chi_epoch B_s / e_ph (= 2.2e7 T); B_s = 4.414005e9 T
+  chi_epoch = 0.1
+  b0 = 2 * chi_epoch * 4.414005e9 / e_ph
+  # The photons do not need the grid; the cell size only sets dt
+  cell = 1 * micron
+end:constant
+
+begin:control
+  nx = 8
+  ny = 8
+  nz = 8
+  x_min = 0
+  x_max = nx * cell
+  y_min = 0
+  y_max = ny * cell
+  z_min = 0
+  z_max = nz * cell
+  t_end = 110 * femto
+  stdout_frequency = 10
+end:control
+
+begin:boundaries
+  bc_x_min = periodic
+  bc_x_max = periodic
+  bc_y_min = periodic
+  bc_y_max = periodic
+  bc_z_min = periodic
+  bc_z_max = periodic
+end:boundaries
+
+begin:fields
+  # Uniform, static magnetic field along z
+  bz = b0
+end:fields
+
+begin:qed
+  use_qed = T
+  qed_start_time = 0
+  produce_photons = F
+  produce_pairs = F
+  # The phase is applied to moving photons
+  photon_dynamics = T
+
+  # The switch for vacuum birefringence (also needs
+  # photon_polarisation = T, the default)
+  vacuum_birefringence = T
+
+  # To add NBW decay and its polarisation dependence (dichroism), set
+  # produce_pairs = T, use_spin_qed = T and pair_tables = lcfa, and add
+  # breit_wheeler_electron and breit_wheeler_positron species. Keep
+  # produce_photons = T in that case (with a high photon_energy_min if
+  # emission from the pairs is not wanted).
+end:qed
+
+begin:species
+  name = e_mode
+  identify:photon
+  nparticles = 100
+  # The density is irrelevant: photons do not interact with each other
+  number_density = 1.0
+  temperature = 0
+  drift_x = p_ph
+  # Stored Stokes vector (xi_1, xi_2, xi_3) = (polarisation_x, _y, _z),
+  # NOT Cartesian components
+  polarisation_x = 1
+end:species
+
+begin:species
+  name = b_mode
+  identify:photon
+  nparticles = 100
+  number_density = 1.0
+  temperature = 0
+  drift_x = p_ph
+  polarisation_x = -1
+end:species
+
+begin:species
+  name = diag
+  identify:photon
+  nparticles = 100
+  number_density = 1.0
+  temperature = 0
+  drift_x = p_ph
+  polarisation_z = 1
+end:species
+
+begin:species
+  name = circ
+  identify:photon
+  nparticles = 100
+  number_density = 1.0
+  temperature = 0
+  drift_x = p_ph
+  polarisation_y = 1
+end:species
+
+begin:species
+  name = unpol
+  identify:photon
+  nparticles = 100
+  number_density = 1.0
+  temperature = 0
+  drift_x = p_ph
+  # No polarisation keys: unpolarised
+end:species
+
+begin:output
+  dt_snapshot = 5 * femto
+  particles = always
+  px = always
+  py = always
+  pz = always
+  particle_weight = always
+  # Stored Stokes vector (SDF: Spin_x_rf etc.)
+  spin_x_rf = always
+  spin_y_rf = always
+  spin_z_rf = always
+end:output

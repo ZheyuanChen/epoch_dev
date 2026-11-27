@@ -1,0 +1,176 @@
+# Polarisation transfer in a high-Z foil: longitudinally polarised
+# electrons -> circularly polarised bremsstrahlung photons ->
+# longitudinally polarised Bethe-Heitler (BH) positrons.
+#
+# Needs a build with -DSPIN, -DPHOTONS and -DBREMSSTRAHLUNG. Neither
+# use_qed nor use_spin_qed is needed: both options are in the
+# bremsstrahlung block.
+#
+# This is the scheme of polarised positron sources (e.g. the PEPPo
+# experiment, Abbott et al., PRL 116, 214801 (2016)), here at 1 GeV.
+#
+# Physics
+# -------
+# brem_spin_polarisation = T: nuclear bremsstrahlung of electrons is
+#   sampled from the screened Olsen-Maximon (1959) cross-section. Each
+#   photon gets the mean Stokes vector of its event: a linear part set
+#   by the emission geometry and a circular part xi_2 transferred from
+#   the electron's helicity. The transfer grows with the photon's share
+#   y = k / E of the electron energy, from 0 at y -> 0 to complete at
+#   y -> 1. The electron's spin is replaced by its mean spin after the
+#   event. Used for electrons with 50 <= gamma <= 1e8 whose final gamma
+#   is at least 10; other electrons radiate through EPOCH's original,
+#   unpolarised bremsstrahlung.
+# bh_spin_transfer = T: the BH pairs get helicities from the photon's
+#   polarisation (screened Olsen-Maximon kernel); the photon's circular
+#   part xi_2 drives the mean helicities, and the two helicities are
+#   correlated even for an unpolarised photon. Applies to photons of at
+#   least 20 MeV whose pair leptons both have at least 10 m c^2; other
+#   pairs are born unpolarised.
+# Both are high-energy, small-angle models of processes in the field of
+# the nucleus; see the user manual for their limits.
+#
+# Set-up
+# ------
+# A dilute 1 GeV electron beam, fully polarised along its motion (+x,
+# helicity +1), crosses a 1 mm (0.3 radiation lengths) neutral gold
+# foil. The run stops when the electrons have just left the foil, with
+# all photons and pairs still in the box.
+#
+# Expected (a few seconds on 1 rank; final dump 0001.sdf)
+# -------- about 46000 photons and 2400 pairs:
+# - Photons ("gamma"): <xi_2> rises with y = k / E_beam and follows the
+#   high-energy transfer P_C(y) = y (4 - y) / (4 - 4y + 3y^2) closely:
+#   about 0.06 for y < 0.1, 0.5 at y = 0.4, 0.94 at y = 0.8 and 1 as
+#   y -> 1. The linear parts average to zero (azimuthal symmetry).
+# - BH positrons ("bh_positron"): mean helicity (Spin_*_rf . p_hat)
+#   0.05-0.1 overall (Monte Carlo noise; most pairs are soft), near 0
+#   below 50 MeV, 0.4 at 200-500 MeV and 0.9
+#   above 500 MeV; BH electrons similar. Pairs from photons below
+#   20 MeV are unpolarised.
+# - Beam electrons ("electron"): mean helicity falls from 1 to about
+#   0.92; those that lost most of their energy are depolarised most.
+# With brem_spin_polarisation = F the photons are unpolarised, and so
+# (up to their helicity correlation) are the pairs.
+
+begin:constant
+  # Total electron energy and momentum
+  e_beam = 1000 * mev
+  p_beam = sqrt(e_beam^2 - (me * c^2)^2) / c
+  # Solid gold: 19.3 g/cm^3
+  n_gold = 5.9e28
+  # Foil position and thickness
+  foil_min = 0.25 * milli
+  foil_max = 1.25 * milli
+  cell = 31.25 * micron
+end:constant
+
+begin:control
+  nx = 48
+  x_min = 0
+  x_max = nx * cell
+  # The beam (starting in x < 2 cells) has just crossed the foil
+  t_end = 4.3 * pico
+  stdout_frequency = 10
+end:control
+
+begin:boundaries
+  bc_x_min = open
+  bc_x_max = open
+end:boundaries
+
+begin:bremsstrahlung
+  use_bremsstrahlung = T
+  start_time = 0
+  produce_photons = T
+  # Photons must move so that they cross the rest of the foil (and can
+  # make BH pairs)
+  photon_dynamics = T
+  # Required by brem_spin_polarisation: electron recoil and scattering,
+  # one real photon per emission, no plasma screening (all defaults
+  # except use_brem_scatter)
+  use_bremsstrahlung_recoil = T
+  use_brem_scatter = T
+  photon_weight = 1.0
+  use_plasma_screening = F
+  # Photons below this energy still cause recoil but are not kept
+  photon_energy_min = 1.0 * mev
+
+  # Polarised bremsstrahlung: photon Stokes vectors and electron spins
+  brem_spin_polarisation = T
+  # The lowest photon energy of a polarised event (a physical cut on the
+  # events, not the output cut photon_energy_min)
+  brem_spin_energy_min = 1.0 * mev
+
+  # Bethe-Heitler pairs, with spins from the photon polarisation
+  use_bethe_heitler = T
+  bh_spin_transfer = T
+end:bremsstrahlung
+
+begin:qed
+  # Not needed for these processes; the block only holds two settings
+  # that they use (both shown at their defaults):
+  use_qed = F
+  # collapse: the two BH helicities are drawn as +-1, jointly with their
+  # correlation; mean: each lepton keeps its mean helicity
+  spin_final_states = collapse
+  # F would make every photon unpolarised
+  photon_polarisation = T
+end:qed
+
+begin:species
+  name = gold
+  # Neutral gold atoms; brem and BH need the atomic number
+  atomic_number = 79
+  # 197 u in units of m_e
+  mass = 359109
+  charge = 0
+  immobile = T
+  npart_per_cell = 16
+  number_density = if((x gt foil_min) and (x lt foil_max), n_gold, 0)
+  temperature = 0
+end:species
+
+begin:species
+  name = electron
+  identify:electron
+  nparticles = 20000
+  # A dilute test beam (no fields of its own) in the first two cells
+  number_density = if(x lt 2 * cell, 1.0, 0)
+  temperature = 0
+  drift_x = p_beam
+  # Rest-frame spin along the motion: helicity +1
+  spin_x = 1
+end:species
+
+begin:species
+  name = gamma
+  identify:brem_photon
+  nparticles = 0
+end:species
+
+begin:species
+  name = bh_electron
+  identify:bh_electron
+  nparticles = 0
+end:species
+
+begin:species
+  name = bh_positron
+  identify:bh_positron
+  nparticles = 0
+end:species
+
+begin:output
+  dt_snapshot = t_end
+  particles = always
+  px = always
+  py = always
+  pz = always
+  particle_weight = always
+  # Stored vectors: rest-frame spin for leptons, Stokes vector
+  # (xi_1, xi_2, xi_3) for photons (SDF: Spin_x_rf etc.)
+  spin_x_rf = always
+  spin_y_rf = always
+  spin_z_rf = always
+end:output
