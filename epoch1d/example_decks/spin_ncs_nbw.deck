@@ -1,0 +1,147 @@
+# Spin- and polarisation-resolved nonlinear Compton scattering (NCS)
+# and nonlinear Breit-Wheeler pair creation (NBW): a polarised electron
+# beam collides head-on with an intense laser pulse.
+#
+# Set-up
+# ------
+# A 5.1 GeV (gamma = 10000) electron beam moves along +x, fully polarised
+# along +z (along the laser's magnetic field). 
+# A 1e22 W/cm^2 (a0 = 68), 0.8 micron laser, linearly polarised
+# with E along y, comes in from x_max. At the collision chi_e is about
+# 4, so the electrons emit many hard photons, and some of those decay
+# into electron-positron pairs.
+#
+# In 1D the beam is a slab and the laser a plane wave: every electron
+# meets the peak intensity, so the yields differ from the 2D and 3D
+# versions.
+#
+# What use_spin_qed = T resolves
+# ------------------------------
+# - NCS: the emission rate and photon spectrum depend on the electron
+#   spin; the emitting electron's spin is updated by the emission, and
+#   every photon is born with a Stokes vector (polarisation).
+#
+# - NBW: the decay rate and energy split depend on the photon's Stokes
+#   vector, and the pair is born with spins.
+#
+# - Quantum no-event evolution: particles that do NOT emit (or decay) 
+#   in a step are also updated:
+#   the state with the larger event rate is depleted faster, so
+#   survivors become polarised.
+#
+# - Spins also precess (T-BMT) all the time, with the field-dependent
+#   anomalous moment a(chi).
+#
+# Expected: 
+# ------------------------------
+# mean rest-frame spin <S_z> falls from 1 to about 0.53; the photons
+# come out linearly polarised along the laser's E field, <xi_1> about
+# 0.56 (xi_1 = +1 is linear along the reference axis r1, which is y for
+# photons moving along +x); about 3700 macro-pairs are created.
+
+begin:constant
+  lambda0 = 0.8 * micron
+  # Beam Lorentz factor (5.1 GeV) and momentum p / (m c)
+  g0 = 1.0e4
+  u0 = sqrt(g0^2 - 1)
+  n_beam = 1.0e24
+end:constant
+
+begin:control
+  # 16 cells per wavelength
+  nx = 600
+  x_min = -15 * micron
+  x_max = 15 * micron
+  t_end = 80 * femto
+  stdout_frequency = 100
+end:control
+
+begin:boundaries
+  bc_x_min = open
+  bc_x_max = simple_laser
+end:boundaries
+
+begin:laser
+  boundary = x_max
+  # Travels towards -x; a0 = 68
+  intensity_w_cm2 = 1.0e22
+  lambda = lambda0
+  # E along y
+  pol_angle = 0.0
+  t_profile = gauss(time, 40 * femto, 15 * femto)
+end:laser
+
+begin:qed
+  use_qed = T
+  qed_start_time = 0
+  produce_photons = T
+  produce_pairs = T
+  # Photons must move for NBW
+  photon_dynamics = T
+  use_radiation_reaction = T
+
+  # The switch for spin- and polarisation-resolved NLCS and NBW. With F,
+  # spins still precess but emission and pair creation ignore them and
+  # new particles are born unpolarised.
+  use_spin_qed = T
+
+  # Defaults, shown for reference:
+  # spin_final_states = collapse  # each particle is put into a definite
+  #                                 state (|S| = 1, |xi| = 1); "mean"
+  #                                 stores the average state instead
+  # pair_tables = lcfa            # exact LCFA pair rate ("legacy" is
+  #                               # EPOCH's original approximation)
+  # use_emission_substeps = T     # events resolved within a time step
+  # spin_no_transition = T        # update the spin of non-emitters
+end:qed
+
+begin:species
+  name = electron
+  identify:electron
+  nparticles = 20000
+  # A short (2 micron) beam slab starting near x_min
+  number_density = if((x gt -14 * micron) and (x lt -12 * micron), \
+      n_beam, 0)
+  temperature = 0
+  drift_x = u0 * me * c
+  # Rest-frame spin along +z: out of the plane, along the laser B
+  spin_z = 1
+end:species
+
+begin:species
+  # NCS photons; their polarisation is set at emission
+  name = photon
+  identify:photon
+  nparticles = 0
+end:species
+
+begin:species
+  name = bw_electron
+  identify:breit_wheeler_electron
+  nparticles = 0
+end:species
+
+begin:species
+  name = bw_positron
+  identify:breit_wheeler_positron
+  nparticles = 0
+end:species
+
+begin:output
+  dt_snapshot = 20 * femto
+  particles = always
+  px = always
+  py = always
+  pz = always
+  particle_weight = always
+  # Stored vectors: rest-frame spin for leptons, Stokes vector for
+  # photons (SDF: Spin_x_rf etc.)
+  spin_x_rf = always
+  spin_y_rf = always
+  spin_z_rf = always
+  # Lab-frame forms (SDF: Spin_x_lab etc.): the spin four-vector part
+  # for leptons, a Cartesian polarisation vector for photons
+  # spin_x = always
+  # spin_y = always
+  # spin_z = always
+end:output

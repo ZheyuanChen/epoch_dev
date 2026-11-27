@@ -1,0 +1,142 @@
+# Spin precession (T-BMT) of electrons gyrating in a uniform magnetic
+# field, with and without the field-dependent anomalous moment a(chi).
+#
+# T-BMT
+# -------
+# Every macroparticle carries a rest-frame spin vector S that obeys the
+# T-BMT equation,
+#   dS/dt = (q/m) S x [ (a + 1/gamma) B
+#                       - a gamma / (gamma + 1) (beta . B) beta
+#                       - (a + 1/(gamma + 1)) beta x E / c ],
+# where a = (g - 2)/2 is the anomalous magnetic moment. 
+# In this example deck, E = 0 and the momentum p lies in the x-y plane
+# perpendicular to B = b0 z-hat, so only the first term survives.
+# The momentum turns at the cyclotron frequency 
+# omega_c = e b0 / (gamma m); an in-plane spin turns at
+# (a + 1/gamma) e b0 / m, i.e. a little faster. The angle between the
+# in-plane spin and the momentum therefore grows linearly,
+#
+#   delta(t) = a e b0 t / m    (= a gamma omega_c t).
+#
+# A spin along B (the z axis) is on the precession axis and stays put.
+#
+# The anomalous moment a(chi)
+# ---------------------------
+# With use_qed = T, electrons and positrons use the one-loop,
+# field-dependent moment a(chi) = (alpha / 2 pi) f(chi) instead of the
+# constant alpha / 2 pi (use_chi_dependent_moment = T is the default).
+# To put it into context, f falls from 1 at chi = 0 to f(1) = 0.487 
+#
+# The beam has chi = 1
+# WIth p_z = 0 and no photon emission, chi stays at 1. Three species:
+#
+#   lepton    identify:electron: an electron, so it uses a(chi)
+#   generic   the same charge and mass set by hand: not identified as a
+#             lepton, so it keeps the constant moment of the deck
+#   along_b   identify:electron with its spin along B: does not move
+#
+# Expected (after the 16 fs run, about two gyrations):
+#   generic   delta = 14.4 rad (a = alpha / 2 pi)
+#   lepton    delta =  7.0 rad, i.e. 0.487 of the generic one
+#   along_b   S = (0, 0, 1) throughout
+
+begin:constant
+  # Lorentz factor and momentum p / (m c) of the beam
+  g0 = 1000.0
+  u0 = sqrt(g0^2 - 1)
+  # Schwinger field in Tesla
+  b_s = 4.414005e9
+  # chi = gamma beta b0 / B_s = 1
+  b0 = b_s / u0
+  # Electron anomalous moment alpha / (2 pi), given explicitly for the
+  # generic species
+  a_e = 1.1614097e-3
+  # Small cells
+  cell = 0.006 * micron
+end:constant
+
+begin:control
+  nx = 16
+  ny = 16
+  x_min = 0
+  x_max = nx * cell
+  y_min = 0
+  y_max = ny * cell
+  # One gyration takes 2 pi gamma m / (e b0) = 8.1 fs
+  t_end = 16 * femto
+  stdout_frequency = 200
+end:control
+
+begin:boundaries
+  bc_x_min = periodic
+  bc_x_max = periodic
+  bc_y_min = periodic
+  bc_y_max = periodic
+end:boundaries
+
+begin:fields
+  # Uniform, static magnetic field along z
+  bz = b0
+end:fields
+
+begin:qed
+  # QED is switched on only so that electrons use a(chi); photon
+  # emission never starts (qed_start_time is far beyond t_end), so the
+  # orbits are the plain gyration.
+  use_qed = T
+  qed_start_time = 1.0
+  produce_photons = F
+  produce_pairs = F
+  use_radiation_reaction = F
+  # use_chi_dependent_moment = T     # the default
+end:qed
+
+begin:species
+  name = lepton
+  identify:electron
+  nparticles = 4
+  # The density is negligible: these are test particles
+  number_density = 1.0
+  temperature = 0
+  drift_x = u0 * me * c
+  # Initial rest-frame spin along the momentum (+x).
+  spin_x = 1
+end:species
+
+begin:species
+  name = generic
+  # An electron by charge (in units of e) and mass (in units of m_e) but
+  # not by identify:, so QED does not touch it and it keeps the moment
+  # given here
+  charge = -1.0
+  mass = 1.0
+  anomalous_magnetic_moment = a_e
+  nparticles = 4
+  number_density = 1.0
+  temperature = 0
+  drift_x = u0 * me * c
+  spin_x = 1
+end:species
+
+begin:species
+  name = along_b
+  identify:electron
+  nparticles = 4
+  number_density = 1.0
+  temperature = 0
+  drift_x = u0 * me * c
+  spin_z = 1
+end:species
+
+begin:output
+  dt_snapshot = 0.5 * femto
+  particles = always
+  px = always
+  py = always
+  pz = always
+  # Stored rest-frame spin S -> Spin_x_rf etc. (spin_x = always would
+  # give the lab-frame spin four-vector part, Spin_x_lab)
+  spin_x_rf = always
+  spin_y_rf = always
+  spin_z_rf = always
+end:output

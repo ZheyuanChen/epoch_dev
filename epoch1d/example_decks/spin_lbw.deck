@@ -1,0 +1,219 @@
+# Polarisation- and spin-resolved linear Breit-Wheeler pair creation,
+# gamma + gamma -> e- + e+: four pairs of colliding photon beams, each
+# pair in a different polarisation state, side by side in one run.
+#
+# Needs a build with -DSPIN and -DPHOTONS. use_spin_qed is NOT needed.
+#
+# Set-up
+# ------
+# Two monoenergetic photon beams counter-propagate along y in a
+# periodic box with no fields. Each photon has 1.26 m c^2 (0.64 MeV),
+# so the CM frame is the lab frame, and the pair-creation
+# cross-section is close to its maximum. The box is split in x into four
+# stripes separated by empty cells; the photons have p_x = 0, so they
+# stay in their stripe, and collisions happen only within a cell.
+# (In 1D there is no y coordinate: the beams move along y, which is
+# not resolved, so that they can be kept apart in x.)
+#
+#   stripe   x (micron)   photon polarisations (beam a, beam b)
+#   unpol    1 - 3        unpolarised, unpolarised: the reference
+#   lpar     5 - 7        both linear along x (parallel)
+#   lperp    9 - 11       linear along x and along z (perpendicular)
+#   hsame    13 - 15      both circular, positive helicity
+#
+# The pair species are immobile, so every pair stays where it was made
+# and its x tells which stripe (polarisation state) it came from.
+#
+# Expected
+# --------
+# With LBW_polarisation = T the cross-section depends on the two Stokes
+# vectors. At this energy, relative to the unpolarised one:
+#   lpar 0.68, lperp 1.32, hsame 1.40
+# so the pair yields of the stripes are in these ratios, to Monte Carlo
+# noise of a few per cent (one 2-rank test run, about 3 s, gave 0.69,
+# 1.34 and 1.40 from 2000-4400 macro-pairs per stripe). The pairs of
+# the hsame stripe are longitudinally polarised: their mean helicity
+# (Spin_*_rf . p_hat) is about +0.89 for both electrons and positrons.
+# The other stripes give unpolarised pairs on average.
+#
+# Photons that have not converted can change their Stokes vector too
+# (the "survivor update": the states that convert more strongly are
+# depleted faster). It does nothing here, because every stripe holds
+# either fully polarised photons in states that the collision does not
+# mix, or unpolarised ones on both sides; it shows when, for example,
+# unpolarised photons meet linearly polarised ones.
+#
+# With LBW_polarisation = F every stripe gives the unpolarised yield and
+# the pairs are created unpolarised.
+#
+#
+# Photon Stokes vectors in the species block
+# ------------------------------------------
+# polarisation_x/y/z set the stored Stokes vector (xi_1, xi_2, xi_3) on
+# the photon's reference axes (r1, r2); they are NOT Cartesian
+# components. r1 = z x n / |z x n|, r2 = n x r1 for direction n, so
+#   photons along +y: (r1, r2) = (-x, z)
+#   photons along -y: (r1, r2) = (+x, z)
+# xi_1 = +1 is linear along r1 and -1 along r2 (here: along x and along
+# z, for both beams), xi_2 = +1 is positive helicity (spin along the
+# motion), xi_3 = +1 is linear along (r1 - r2) / sqrt(2). The vector is
+# not normalised: a length below 1 means partial polarisation.
+
+begin:constant
+  cell = 0.5 * micron
+  # Energy of each photon in units of m c^2
+  c_star = 1.26
+  p_ph = c_star * me * c
+  # Photon density; high only to give enough pairs in a short run
+  n_ph = 1.0e30
+end:constant
+
+begin:control
+  nx = 32
+  x_min = 0
+  x_max = nx * cell
+  t_end = 200 * femto
+  stdout_frequency = 50
+end:control
+
+begin:boundaries
+  bc_x_min = periodic
+  bc_x_max = periodic
+end:boundaries
+
+begin:qed
+  use_qed = T
+  qed_start_time = 0
+  # Photons only collide: no emission, no NBW
+  produce_photons = F
+  produce_pairs = F
+  photon_dynamics = T
+  linear_breit_wheeler = T
+  # Pair angles from the differential cross-section
+  LBW_differential_cross = T
+  # Variance reduction: collisions are sampled 500 times more often and
+  # each pair gets 1/500 of the weight, so the physical yield is the same
+  # but with more macro-pairs
+  amplify_LBW_factor = 500
+
+  # The switch for polarisation-resolved LBW: cross-section, pair
+  # angles, pair spins and the survivor update of the photons
+  LBW_polarisation = T
+end:qed
+
+# The photon beams. Beam a moves along +y, beam b along -y.
+
+begin:species
+  name = unpol_a
+  identify:photon
+  npart_per_cell = 800
+  number_density = if((x gt 1 * micron) and (x lt 3 * micron), n_ph, 0)
+  temperature = 0
+  drift_y = p_ph
+  # No polarisation keys: unpolarised
+end:species
+
+begin:species
+  name = unpol_b
+  identify:photon
+  npart_per_cell = 800
+  number_density = if((x gt 1 * micron) and (x lt 3 * micron), n_ph, 0)
+  temperature = 0
+  drift_y = -p_ph
+end:species
+
+begin:species
+  name = lpar_a
+  identify:photon
+  npart_per_cell = 800
+  number_density = if((x gt 5 * micron) and (x lt 7 * micron), n_ph, 0)
+  temperature = 0
+  drift_y = p_ph
+  # Linear along r1 = -x
+  polarisation_x = 1
+end:species
+
+begin:species
+  name = lpar_b
+  identify:photon
+  npart_per_cell = 800
+  number_density = if((x gt 5 * micron) and (x lt 7 * micron), n_ph, 0)
+  temperature = 0
+  drift_y = -p_ph
+  # Linear along r1 = +x, i.e. along x again: parallel to beam a
+  polarisation_x = 1
+end:species
+
+begin:species
+  name = lperp_a
+  identify:photon
+  npart_per_cell = 800
+  number_density = if((x gt 9 * micron) and (x lt 11 * micron), n_ph, 0)
+  temperature = 0
+  drift_y = p_ph
+  # Linear along x
+  polarisation_x = 1
+end:species
+
+begin:species
+  name = lperp_b
+  identify:photon
+  npart_per_cell = 800
+  number_density = if((x gt 9 * micron) and (x lt 11 * micron), n_ph, 0)
+  temperature = 0
+  drift_y = -p_ph
+  # Linear along r2 = z: perpendicular to beam a
+  polarisation_x = -1
+end:species
+
+begin:species
+  name = hsame_a
+  identify:photon
+  npart_per_cell = 800
+  number_density = if((x gt 13 * micron) and (x lt 15 * micron), n_ph, 0)
+  temperature = 0
+  drift_y = p_ph
+  # Circular, positive helicity
+  polarisation_y = 1
+end:species
+
+begin:species
+  name = hsame_b
+  identify:photon
+  npart_per_cell = 800
+  number_density = if((x gt 13 * micron) and (x lt 15 * micron), n_ph, 0)
+  temperature = 0
+  drift_y = -p_ph
+  # Circular, positive helicity (relative to its own motion, -y)
+  polarisation_y = 1
+end:species
+
+# The LBW pair species; immobile so that each pair stays in its stripe
+
+begin:species
+  name = lbw_electron
+  identify:LBW_electron
+  nparticles = 0
+  immobile = T
+end:species
+
+begin:species
+  name = lbw_positron
+  identify:LBW_positron
+  nparticles = 0
+  immobile = T
+end:species
+
+begin:output
+  dt_snapshot = 100 * femto
+  particles = always
+  px = always
+  py = always
+  pz = always
+  particle_weight = always
+  # Stored vectors: rest-frame spin for the pairs, Stokes vector for the
+  # photons (SDF: Spin_x_rf etc.)
+  spin_x_rf = always
+  spin_y_rf = always
+  spin_z_rf = always
+end:output
